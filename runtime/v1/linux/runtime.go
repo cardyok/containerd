@@ -189,6 +189,7 @@ func (r *Runtime) Create(ctx context.Context, id string, opts runtime.CreateOpts
 	}()
 
 	shimopt := ShimLocal(r.config, r.events)
+	started := false
 	if !r.config.NoShim {
 		var cgroup string
 		if opts.TaskOptions != nil {
@@ -201,13 +202,15 @@ func (r *Runtime) Create(ctx context.Context, id string, opts runtime.CreateOpts
 		exitHandler := func() {
 			log.G(ctx).WithField("id", id).Info("shim reaped")
 
-			if _, err := r.tasks.Get(ctx, id); err != nil {
-				// Task was never started or was already successfully deleted
-				return
+			if started {
+				if _, ex := r.tasks.Get(ctx, id); ex != nil {
+					// Task was never started or was already successfully deleted
+					return
+				}
 			}
 
-			if err = r.cleanupAfterDeadShim(context.Background(), bundle, namespace, id); err != nil {
-				log.G(ctx).WithError(err).WithFields(logrus.Fields{
+			if ex := r.cleanupAfterDeadShim(context.Background(), bundle, namespace, id, started); ex != nil {
+				log.G(ctx).WithError(ex).WithFields(logrus.Fields{
 					"id":        id,
 					"namespace": namespace,
 				}).Warn("failed to clean up after killed shim")
@@ -264,6 +267,7 @@ func (r *Runtime) Create(ctx context.Context, id string, opts runtime.CreateOpts
 	if err := r.tasks.Add(ctx, t); err != nil {
 		return nil, err
 	}
+	started = true
 	r.events.Publish(ctx, runtime.TaskCreateEventTopic, &eventstypes.TaskCreate{
 		ContainerID: sopts.ID,
 		Bundle:      sopts.Bundle,
@@ -368,7 +372,7 @@ func (r *Runtime) loadTasks(ctx context.Context, ns string) ([]*Task, error) {
 				return
 			}
 
-			if err := r.cleanupAfterDeadShim(ctx, bundle, ns, id); err != nil {
+			if err := r.cleanupAfterDeadShim(ctx, bundle, ns, id, true); err != nil {
 				log.G(ctx).WithError(err).WithField("bundle", bundle.path).
 					Error("cleaning up after dead shim")
 			}
@@ -378,7 +382,7 @@ func (r *Runtime) loadTasks(ctx context.Context, ns string) ([]*Task, error) {
 				"id":        id,
 				"namespace": ns,
 			}).Error("connecting to shim")
-			err := r.cleanupAfterDeadShim(ctx, bundle, ns, id)
+			err := r.cleanupAfterDeadShim(ctx, bundle, ns, id, true)
 			if err != nil {
 				log.G(ctx).WithError(err).WithField("bundle", bundle.path).
 					Error("cleaning up after dead shim")
@@ -440,7 +444,7 @@ func (r *Runtime) loadTasks(ctx context.Context, ns string) ([]*Task, error) {
 	return o, nil
 }
 
-func (r *Runtime) cleanupAfterDeadShim(ctx context.Context, bundle *bundle, ns, id string) error {
+func (r *Runtime) cleanupAfterDeadShim(ctx context.Context, bundle *bundle, ns, id string, started bool) error {
 	log.G(ctx).WithFields(logrus.Fields{
 		"id":        id,
 		"namespace": ns,
@@ -457,13 +461,15 @@ func (r *Runtime) cleanupAfterDeadShim(ctx context.Context, bundle *bundle, ns, 
 
 	// Notify Client
 	exitedAt := time.Now().UTC()
-	r.events.Publish(ctx, runtime.TaskExitEventTopic, &eventstypes.TaskExit{
-		ContainerID: id,
-		ID:          id,
-		Pid:         uint32(pid),
-		ExitStatus:  128 + uint32(unix.SIGKILL),
-		ExitedAt:    exitedAt,
-	})
+	if started {
+		r.events.Publish(ctx, runtime.TaskExitEventTopic, &eventstypes.TaskExit{
+			ContainerID: id,
+			ID:          id,
+			Pid:         uint32(pid),
+			ExitStatus:  128 + uint32(unix.SIGKILL),
+			ExitedAt:    exitedAt,
+		})
+	}
 
 	r.tasks.Delete(ctx, id)
 	if err := bundle.Delete(); err != nil {
@@ -474,12 +480,14 @@ func (r *Runtime) cleanupAfterDeadShim(ctx context.Context, bundle *bundle, ns, 
 		unix.Kill(shimPid, unix.SIGKILL)
 	}
 
-	r.events.Publish(ctx, runtime.TaskDeleteEventTopic, &eventstypes.TaskDelete{
-		ContainerID: id,
-		Pid:         uint32(pid),
-		ExitStatus:  128 + uint32(unix.SIGKILL),
-		ExitedAt:    exitedAt,
-	})
+	if started {
+		r.events.Publish(ctx, runtime.TaskDeleteEventTopic, &eventstypes.TaskDelete{
+			ContainerID: id,
+			Pid:         uint32(pid),
+			ExitStatus:  128 + uint32(unix.SIGKILL),
+			ExitedAt:    exitedAt,
+		})
+	}
 
 	return nil
 }
