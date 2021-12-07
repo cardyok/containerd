@@ -17,6 +17,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,6 +35,7 @@ import (
 
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/content/local"
+	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/oci"
 	"github.com/containerd/containerd/pkg/atomic"
 	criconfig "github.com/containerd/containerd/pkg/cri/config"
@@ -44,6 +46,7 @@ import (
 	snapshotstore "github.com/containerd/containerd/pkg/cri/store/snapshot"
 	"github.com/containerd/containerd/pkg/cri/streaming"
 	ctrdutil "github.com/containerd/containerd/pkg/cri/util"
+	"github.com/containerd/containerd/pkg/imagegcplugin"
 	"github.com/containerd/containerd/pkg/kmutex"
 	osinterface "github.com/containerd/containerd/pkg/os"
 	"github.com/containerd/containerd/pkg/registrar"
@@ -131,6 +134,10 @@ type criService struct {
 	// one in-flight fetch request or unpack handler for a given descriptor's
 	// or chain ID.
 	unpackDuplicationSuppressor kmutex.KeyedLocker
+	// related to image gc
+	imageGCHandler imagegcplugin.GarbageCollect
+	imageGCSwitch  imagegcplugin.Status
+	imageGCDoneCh  chan struct{}
 }
 
 // NewCRIService returns a new instance of CRIService
@@ -251,6 +258,47 @@ func (c *criService) Run(ready func()) error {
 		close(cniNetConfMonitorErrCh)
 	}()
 
+	// Start Image GC
+	imageGCConfig := c.imageGCSwitch.Config()
+	if imageGCConfig.HighThresholdPercent == 100 {
+		logrus.Info("Image GC HighThresholdPercent is 100%, doesn't start image gc loop")
+	} else {
+		period := time.Duration(imageGCConfig.GCPeriodSeconds) * time.Second
+		logrus.Infof("Start Image GC with period %v seconds", imageGCConfig.GCPeriodSeconds)
+		go func() {
+			timer := time.NewTimer(period)
+
+			stopTimer := func(timer_ *time.Timer, recv_ bool) {
+				if !timer_.Stop() && recv_ {
+					<-timer_.C
+				}
+			}
+			stopTimer(timer, true)
+
+			ctx := log.WithLogger(context.TODO(), logrus.WithField("module", "imagegc"))
+			ctx = ctrdutil.WithNamespace(ctx)
+			for {
+				timer.Reset(period)
+				select {
+				case <-c.imageGCDoneCh:
+					logrus.Infof("stop signal and stop image gc loop")
+					stopTimer(timer, true)
+					return
+				case <-timer.C:
+					stopTimer(timer, false)
+				}
+
+				if !c.imageGCSwitch.Enabled() {
+					continue
+				}
+
+				if err := c.imageGCHandler.GarbageCollect(ctx); err != nil {
+					logrus.Errorf("failed to handler garbage collect: %v", err)
+				}
+			}
+		}()
+	}
+
 	// Start streaming server.
 	logrus.Info("Start streaming server")
 	streamServerErrCh := make(chan error)
@@ -343,6 +391,14 @@ func (c *criService) Close() error {
 		logrus.WithError(nil).Errorf("stop CRI server after waited 60 seconds, on going request %v", &local.FlyingReqWg)
 	}
 
+	// close for image gc
+	if c.imageGCDoneCh != nil {
+		select {
+		case <-c.imageGCDoneCh:
+		default:
+			close(c.imageGCDoneCh)
+		}
+	}
 	return nil
 }
 
@@ -398,4 +454,31 @@ func loadBaseOCISpecs(config *criconfig.Config) (map[string]*oci.Spec, error) {
 	}
 
 	return specs, nil
+}
+
+func (c *criService) InitImageGC(switchStatus imagegcplugin.Status) error {
+	var err error
+
+	config := switchStatus.Config()
+
+	gcpolicy := imagegcplugin.GcPolicy{
+		LowThresholdPercent:  config.LowThresholdPercent,
+		HighThresholdPercent: config.HighThresholdPercent,
+		MinAge:               time.Duration(config.MinAgeSeconds) * time.Second,
+		Whitelist:            append(config.Whitelist, c.config.SandboxImage),
+		WhitelistGoRegex:     config.WhitelistGoRegex,
+	}
+
+	c.imageGCHandler, err = imagegcplugin.NewImageGarbageCollect(
+		imagegcplugin.NewCRIRuntime(c),
+		gcpolicy,
+		c.imageFSPath,
+	)
+	if err != nil {
+		return err
+	}
+
+	c.imageGCSwitch = switchStatus
+	c.imageGCDoneCh = make(chan struct{})
+	return nil
 }

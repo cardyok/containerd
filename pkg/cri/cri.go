@@ -44,6 +44,7 @@ import (
 	criconfig "github.com/containerd/containerd/pkg/cri/config"
 	"github.com/containerd/containerd/pkg/cri/constants"
 	"github.com/containerd/containerd/pkg/cri/server"
+	"github.com/containerd/containerd/pkg/imagegcplugin"
 )
 
 // Register CRI service plugin
@@ -56,6 +57,7 @@ func init() {
 		Requires: []plugin.Type{
 			plugin.EventPlugin,
 			plugin.ServicePlugin,
+			plugin.InternalPlugin,
 		},
 		InitFn: initCRIService,
 	})
@@ -112,6 +114,10 @@ func initCRIService(ic *plugin.InitContext) (interface{}, error) {
 	s, err := server.NewCRIService(c, client)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CRI service: %w", err)
+	}
+
+	if err := initImageGCForCri(ic, s.(initializeImageGC)); err != nil {
+		return nil, errors.Wrap(err, "failed to init image gc for cri")
 	}
 
 	go func() {
@@ -200,6 +206,33 @@ func setGLogLevel() error {
 		return fs.Set("v", "2")
 	default:
 		// glog doesn't support other filters. Defaults to v=0.
+	}
+	return nil
+}
+
+type initializeImageGC interface {
+	InitImageGC(imagegcplugin.Status) error
+}
+
+func initImageGCForCri(ic *plugin.InitContext, handler initializeImageGC) error {
+	// init image gc
+	internalPlugins, err := ic.GetByType(plugin.InternalPlugin)
+	if err != nil {
+		return errors.Wrap(err, "failed to get internal plugins")
+	}
+
+	imageGCSwitch := internalPlugins[imagegcplugin.SwitchPluginName]
+	if imageGCSwitch == nil {
+		return errors.Wrap(err, "failed to get internal plugin for image gc switch")
+	}
+
+	gcSwitchInstance, err := imageGCSwitch.Instance()
+	if err != nil {
+		return errors.Wrap(err, "failed to get image gc switch instance")
+	}
+
+	if err := handler.InitImageGC(gcSwitchInstance.(imagegcplugin.Status)); err != nil {
+		return errors.Wrap(err, "failed to init image gc")
 	}
 	return nil
 }
