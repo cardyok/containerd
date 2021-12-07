@@ -39,6 +39,7 @@ import (
 
 	"github.com/containerd/containerd/pkg/cri/store/label"
 
+	"github.com/containerd/containerd/content/local"
 	"github.com/containerd/containerd/pkg/atomic"
 	criconfig "github.com/containerd/containerd/pkg/cri/config"
 	containerstore "github.com/containerd/containerd/pkg/cri/store/container"
@@ -302,6 +303,7 @@ func (c *criService) Run(ready func()) error {
 // Close stops the CRI service.
 // TODO(random-liu): Make close synchronous.
 func (c *criService) Close() error {
+	// Close all http conntions
 	logrus.Info("Stop CRI service")
 	for name, h := range c.cniNetConfMonitor {
 		if err := h.stop(); err != nil {
@@ -312,6 +314,23 @@ func (c *criService) Close() error {
 	if err := c.streamServer.Stop(); err != nil {
 		return fmt.Errorf("failed to stop stream server: %w", err)
 	}
+
+	// wait flying req to zero
+	// drain all requests on going which we care, exclude requests like exec
+	logrus.Info("Start waiting for flying request")
+	drain := make(chan struct{})
+	go func() {
+		defer close(drain)
+		local.FlyingReqWg.Wait()
+	}()
+
+	select {
+	case <-drain:
+		logrus.Infof("CRI server has shutdown")
+	case <-time.After(60 * time.Second):
+		logrus.WithError(nil).Errorf("stop CRI server after waited 60 seconds, on going request %v", &local.FlyingReqWg)
+	}
+
 	return nil
 }
 

@@ -34,6 +34,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/containerd/ttrpc"
+	metrics "github.com/docker/go-metrics"
+	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
+	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
+	"github.com/sirupsen/logrus"
+	bolt "go.etcd.io/bbolt"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
+
 	csapi "github.com/containerd/containerd/api/services/content/v1"
 	ssapi "github.com/containerd/containerd/api/services/snapshots/v1"
 	"github.com/containerd/containerd/content"
@@ -45,22 +57,13 @@ import (
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/metadata"
 	"github.com/containerd/containerd/pkg/dialer"
+	"github.com/containerd/containerd/pkg/grpc/interceptor"
 	"github.com/containerd/containerd/pkg/timeout"
 	"github.com/containerd/containerd/plugin"
 	srvconfig "github.com/containerd/containerd/services/server/config"
 	"github.com/containerd/containerd/snapshots"
 	ssproxy "github.com/containerd/containerd/snapshots/proxy"
 	"github.com/containerd/containerd/sys"
-	"github.com/containerd/ttrpc"
-	metrics "github.com/docker/go-metrics"
-	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
-	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
-	bolt "go.etcd.io/bbolt"
-	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/backoff"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
@@ -140,6 +143,7 @@ func New(ctx context.Context, config *srvconfig.Config) (*Server, error) {
 			otelgrpc.UnaryServerInterceptor(),
 			grpc.UnaryServerInterceptor(grpc_prometheus.UnaryServerInterceptor),
 			unaryNamespaceInterceptor,
+			interceptor.FlyingRequestCountInterceptor(interceptor.FlyingReqCountDecider, &local.FlyingReqWg),
 		)),
 	}
 	if config.GRPC.MaxRecvMsgSize > 0 {
@@ -365,7 +369,26 @@ func (s *Server) ServeDebug(l net.Listener) error {
 
 // Stop the containerd server canceling any open connections
 func (s *Server) Stop() {
-	s.grpcServer.Stop()
+	// soft shutdown the grpc service
+	// if interceptor  FlyingRequestCountInterceptor is registered, it will watch this status,determice whether  bypass all new request
+	interceptor.SoftBypassNewReq = true
+
+	// wait flying req to zero
+	// drain all requests on going which we care, exclude requests like exec
+	logrus.Info("Start waiting for containerd flying request")
+	drain := make(chan struct{})
+	go func() {
+		defer close(drain)
+		local.FlyingReqWg.Wait()
+	}()
+
+	select {
+	case <-drain:
+		logrus.Infof("Containerd server has shutdown")
+	case <-time.After(60 * time.Second):
+		logrus.WithError(nil).Errorf("stop Containerd server after waited 60 seconds, on going request %v", &local.FlyingReqWg)
+	}
+
 	for i := len(s.plugins) - 1; i >= 0; i-- {
 		p := s.plugins[i]
 		instance, err := p.Instance()
@@ -383,6 +406,7 @@ func (s *Server) Stop() {
 				Error("failed to close plugin")
 		}
 	}
+	s.grpcServer.Stop()
 }
 
 func (s *Server) RegisterReadiness() func() {
