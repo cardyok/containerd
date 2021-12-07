@@ -131,7 +131,7 @@ func (b *binary) Start(ctx context.Context, opts *types.Any, onClose func()) (_ 
 	if err := os.WriteFile(filepath.Join(b.bundle.Path, "shim-binary-path"), []byte(b.runtime), 0600); err != nil {
 		return nil, err
 	}
-	client := ttrpc.NewClient(conn, ttrpc.WithOnClose(onCloseWithShimLog))
+	client := ttrpc.NewClient(conn, ttrpc.WithOnClose(onCloseWithShimLog), ttrpc.WithUnaryClientInterceptor(MakeTTRPCInterceptorByAddr(address)))
 	return &shim{
 		bundle: b.bundle,
 		client: client,

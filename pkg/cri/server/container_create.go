@@ -73,7 +73,7 @@ func (c *criService) CreateContainer(ctx context.Context, r *runtime.CreateConta
 	}
 	containerName := metadata.Name
 	name := makeContainerName(metadata, sandboxConfig.GetMetadata())
-	log.G(ctx).Debugf("Generated id %q for container %q", id, name)
+	log.G(ctx).Infof("Generated id %q for container %q", id, name)
 	if err = c.containerNameIndex.Reserve(name, id); err != nil {
 		return nil, fmt.Errorf("failed to reserve container name %q: %w", name, err)
 	}
@@ -181,7 +181,7 @@ func (c *criService) CreateContainer(ctx context.Context, r *runtime.CreateConta
 		}
 	}()
 
-	log.G(ctx).Debugf("Container %q spec: %#+v", id, spew.NewFormatter(spec))
+	log.G(ctx).Infof("Container %q spec: %#+v", id, spew.NewFormatter(spec))
 
 	snapshotterOpt := snapshots.WithLabels(snapshots.FilterInheritedLabels(config.Annotations))
 	// Set snapshotter before any other options.

@@ -25,6 +25,7 @@ import (
 	eventtypes "github.com/containerd/containerd/api/events"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/log"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 
@@ -174,6 +175,14 @@ func (c *criService) teardownPodNetwork(ctx context.Context, sandbox sandboxstor
 	if netPlugin == nil {
 		return errors.New("cni config not initialized")
 	}
+
+	start := time.Now()
+	defer func() {
+		d := int(time.Since(start).Seconds())
+		if d > 1 {
+			logrus.Infof("teardown network for %s elapse %d seconds", sandbox.ID, d)
+		}
+	}()
 
 	var (
 		id     = sandbox.ID

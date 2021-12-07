@@ -111,7 +111,7 @@ func loadShim(ctx context.Context, bundle *Bundle, onClose func()) (_ *shimTask,
 		cancelShimLog()
 		f.Close()
 	}
-	client := ttrpc.NewClient(conn, ttrpc.WithOnClose(onCloseWithShimLog))
+	client := ttrpc.NewClient(conn, ttrpc.WithOnClose(onCloseWithShimLog), ttrpc.WithUnaryClientInterceptor(MakeTTRPCInterceptorByAddr(address)))
 	defer func() {
 		if err != nil {
 			client.Close()
@@ -132,6 +132,19 @@ func loadShim(ctx context.Context, bundle *Bundle, onClose func()) (_ *shimTask,
 		return nil, err
 	}
 	return s, nil
+}
+
+func MakeTTRPCInterceptorByAddr(addr string) ttrpc.UnaryClientInterceptor {
+	return func(ctx context.Context, req *ttrpc.Request, resp *ttrpc.Response, _ *ttrpc.UnaryClientInfo, invoker ttrpc.Invoker) error {
+		startTime := time.Now()
+		defer func() {
+			duration := int(time.Since(startTime).Seconds())
+			if duration > 1 {
+				logrus.Infof("%s ttrpc invoke %s %s elapse %d seconds", addr, req.Service, req.Method, duration)
+			}
+		}()
+		return invoker(ctx, req, resp)
+	}
 }
 
 func cleanupAfterDeadShim(ctx context.Context, id, ns string, rt *runtime.TaskList, events *exchange.Exchange, binaryCall *binary) {

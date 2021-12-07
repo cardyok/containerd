@@ -60,7 +60,7 @@ func init() {
 // the sandbox is in ready state.
 func (c *criService) RunPodSandbox(ctx context.Context, r *runtime.RunPodSandboxRequest) (_ *runtime.RunPodSandboxResponse, retErr error) {
 	config := r.GetConfig()
-	log.G(ctx).Debugf("Sandbox config %+v", config)
+	log.G(ctx).Infof("Sandbox config %+v", config)
 
 	// Generate unique id and name for the sandbox and reserve the name.
 	id := util.GenerateID()
@@ -69,7 +69,7 @@ func (c *criService) RunPodSandbox(ctx context.Context, r *runtime.RunPodSandbox
 		return nil, errors.New("sandbox config must include metadata")
 	}
 	name := makeSandboxName(metadata)
-	log.G(ctx).WithField("podsandboxid", id).Debugf("generated id for sandbox name %q", name)
+	log.G(ctx).WithField("podsandboxid", id).Infof("generated id for sandbox name %q", name)
 
 	// cleanupErr records the last error returned by the critical cleanup operations in deferred functions,
 	// like CNI teardown and stopping the running sandbox task.
@@ -438,6 +438,14 @@ func (c *criService) setupPodNetwork(ctx context.Context, sandbox *sandboxstore.
 	if netPlugin == nil {
 		return errors.New("cni config not initialized")
 	}
+
+	start := time.Now()
+	defer func() {
+		d := int(time.Since(start).Seconds())
+		if d > 1 {
+			logrus.Infof("setup network for %s elapse %d seconds", id, d)
+		}
+	}()
 
 	opts, err := cniNamespaceOpts(id, config)
 	if err != nil {
