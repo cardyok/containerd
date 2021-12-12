@@ -246,7 +246,7 @@ func checkSnapshotterBasic(ctx context.Context, t *testing.T, snapshotter snapsh
 			t.Errorf("Missing stat for %v", ek)
 			continue
 		}
-		assert.Check(t, is.DeepEqual(ev, av))
+		assert.Check(t, checkInfo(ev, av))
 	}
 
 	nextnext := filepath.Join(work, "nextnextlayer")

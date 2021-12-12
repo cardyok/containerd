@@ -148,15 +148,6 @@ func checkInfo(si1, si2 snapshots.Info) error {
 	if si1.Parent != si2.Parent {
 		return fmt.Errorf("Expected Parent %v, got %v", si1.Parent, si2.Parent)
 	}
-	if len(si1.Labels) != len(si2.Labels) {
-		return fmt.Errorf("Expected %d labels, got %d", len(si1.Labels), len(si2.Labels))
-	}
-	for k, l1 := range si1.Labels {
-		l2 := si2.Labels[k]
-		if l1 != l2 {
-			return fmt.Errorf("Expected label %v, got %v", l1, l2)
-		}
-	}
 	if si1.Created != si2.Created {
 		return fmt.Errorf("Expected Created %v, got %v", si1.Created, si2.Created)
 	}

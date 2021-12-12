@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -133,10 +134,16 @@ func (o *snapshotter) Stat(ctx context.Context, key string) (snapshots.Info, err
 		return snapshots.Info{}, err
 	}
 	defer t.Rollback()
-	id, info, _, err := storage.GetInfo(ctx, key)
+	id, info, size, err := storage.GetInfo(ctx, key)
 	if err != nil {
 		return snapshots.Info{}, err
 	}
+	if info.Labels == nil {
+		info.Labels = map[string]string{}
+	}
+	info.Labels["Backend-id"] = id
+	info.Labels["Backend-inode"] = strconv.FormatInt(size.Inodes, 10)
+	info.Labels["Backend-size"] = ByteCountDecimal(size.Size)
 
 	if o.upperdirLabel {
 		if info.Labels == nil {
@@ -571,4 +578,17 @@ func supportsIndex() bool {
 		return true
 	}
 	return false
+}
+
+func ByteCountDecimal(b int64) string {
+	const unit = 1000
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "kMGTPE"[exp])
 }

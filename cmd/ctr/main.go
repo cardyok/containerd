@@ -33,9 +33,24 @@ func init() {
 
 func main() {
 	app := app.New()
+	updateCtrAppDefaultValue(app)
 	app.Commands = append(app.Commands, pluginCmds...)
 	if err := app.Run(os.Args); err != nil {
 		fmt.Fprintf(os.Stderr, "ctr: %s\n", err)
 		os.Exit(1)
+	}
+}
+
+func updateCtrAppDefaultValue(app *cli.App) {
+	for idx, flag := range app.Flags {
+		switch n := flag.GetName(); n {
+		case "namespace, n":
+			f, ok := flag.(cli.StringFlag)
+			if !ok {
+				continue
+			}
+			f.Value = "k8s.io"
+			app.Flags[idx] = f
+		}
 	}
 }

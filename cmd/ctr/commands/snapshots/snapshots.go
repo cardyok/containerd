@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -42,7 +43,7 @@ import (
 // Command is the cli command for managing snapshots
 var Command = cli.Command{
 	Name:    "snapshots",
-	Aliases: []string{"snapshot"},
+	Aliases: []string{"snapshot", "sn"},
 	Usage:   "manage snapshots",
 	Flags:   commands.SnapshotterFlags,
 	Subcommands: cli.Commands{
@@ -54,6 +55,7 @@ var Command = cli.Command{
 		prepareCommand,
 		removeCommand,
 		setLabelCommand,
+		statusCommand,
 		treeCommand,
 		unpackCommand,
 		usageCommand,
@@ -75,15 +77,66 @@ var listCommand = cli.Command{
 			snapshotter = client.SnapshotService(context.GlobalString("snapshotter"))
 			tw          = tabwriter.NewWriter(os.Stdout, 1, 8, 1, ' ', 0)
 		)
-		fmt.Fprintln(tw, "KEY\tPARENT\tKIND\t")
+		fmt.Fprintln(tw, "KEY\tPARENT\tKIND\tSIZE\tBACKEND-ID\tINODE\t")
 		if err := snapshotter.Walk(ctx, func(ctx gocontext.Context, info snapshots.Info) error {
-			fmt.Fprintf(tw, "%v\t%v\t%v\t\n",
+			fmt.Fprintf(tw, "%v\t%v\t%v\t%v\t%v\t%v\t\n",
 				info.Name,
 				info.Parent,
-				info.Kind)
+				info.Kind,
+				info.Labels["Backend-size"],
+				info.Labels["Backend-id"],
+				info.Labels["Backend-inode"])
 			return nil
 		}); err != nil {
 			return err
+		}
+
+		return tw.Flush()
+	},
+}
+
+var statusCommand = cli.Command{
+	Name:  "status",
+	Usage: "check gc status of snapshot gc, diff between db snapshot and backend snapshot service",
+	Flags: append([]cli.Flag{
+		cli.StringFlag{
+			Name:  "root",
+			Usage: "path to snapshotter root folder",
+			Value: "/home/t4/containerd/io.containerd.snapshotter.v1.overlayfs",
+		},
+	}),
+	Action: func(context *cli.Context) error {
+		client, ctx, cancel, err := commands.NewClient(context)
+		if err != nil {
+			return err
+		}
+		defer cancel()
+		var (
+			snapshotter = client.SnapshotService(context.GlobalString("snapshotter"))
+			tw          = tabwriter.NewWriter(os.Stdout, 1, 8, 1, ' ', 0)
+		)
+		dbMap := map[string]snapshots.Info{}
+		if err := snapshotter.Walk(ctx, func(ctx gocontext.Context, info snapshots.Info) error {
+			dbMap[info.Labels["Backend-id"]] = info
+			return nil
+		}); err != nil {
+			return err
+		}
+
+		snapshotDir := filepath.Join(context.String("root"), "snapshots")
+		fd, err := os.Open(snapshotDir)
+		if err != nil {
+			return err
+		}
+		defer fd.Close()
+
+		fmt.Fprintln(tw, "LEAK-PATH\t")
+		dirs, err := fd.Readdirnames(0)
+		for _, d := range dirs {
+			if _, ok := dbMap[d]; ok {
+				continue
+			}
+			fmt.Fprintf(tw, "%v\n", filepath.Join(snapshotDir, d))
 		}
 
 		return tw.Flush()
