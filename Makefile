@@ -103,15 +103,17 @@ GO_LDFLAGS+='
 SHIM_GO_LDFLAGS=-ldflags '-X $(PKG)/version.Version=$(VERSION) -X $(PKG)/version.Revision=$(REVISION) -X $(PKG)/version.Package=$(PACKAGE) -extldflags "-static" $(EXTRA_LDFLAGS)'
 
 # Project packages.
-PACKAGES=$(shell $(GO) list ${GO_TAGS} ./... | grep -v /vendor/ | grep -v /integration)
+PACKAGES=$(shell $(GO) list ${GO_TAGS} ./... | grep -v /vendor/ | grep -v /integration | grep -v /staging)
 API_PACKAGES=$(shell (cd api && $(GO) list ${GO_TAGS} ./... | grep -v /vendor/ | grep -v /integration))
 NON_API_PACKAGES=$(shell $(GO) list ${GO_TAGS} ./... | grep -v /vendor/ | grep -v /integration | grep -v "containerd/api")
 TEST_REQUIRES_ROOT_PACKAGES=$(filter \
     ${PACKAGES}, \
     $(shell \
-	for f in $$(git grep -l testutil.RequiresRoot | grep -v Makefile); do \
+	for f in $$(git grep -l testutil.RequiresRoot | grep -v Makefile | grep -v "devmapper"); do \
 		d="$$(dirname $$f)"; \
+		[ "$$fstype" = "overlay" ] && [[ "$$d" = *"overlay"* ]] && continue; \
 		[ "$$d" = "." ] && echo "${PKG}" && continue; \
+		fstype="$$(findmnt / -o FSTYPE -n)"; \
 		echo "${PKG}/$$d"; \
 	done | sort -u) \
     )
