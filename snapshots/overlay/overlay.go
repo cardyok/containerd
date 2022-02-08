@@ -42,6 +42,11 @@ import (
 // the change set between this snapshot and its parent is stored.
 const upperdirKey = "containerd.io/snapshot/overlay.upperdir"
 
+// volatileOpt is a key of an optional lablel to each snapshot.
+// If this optional label of a snapshot is specified, when mounted to rootdir
+// this snapshot will include volatile option
+const volatileOpt = "containerd.io/snapshot/overlay.volatile"
+
 // SnapshotterConfig is used to configure the overlay snapshotter instance
 type SnapshotterConfig struct {
 	asyncRemove   bool
@@ -234,12 +239,16 @@ func (o *snapshotter) Mounts(ctx context.Context, key string) ([]mount.Mount, er
 	if err != nil {
 		return nil, err
 	}
+	_, info, _, err := storage.GetInfo(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get info for snapshot %s: %w", key, err)
+	}
 	s, err := storage.GetSnapshot(ctx, key)
 	t.Rollback()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get active mount: %w", err)
 	}
-	return o.mounts(s), nil
+	return o.mounts(&info, s), nil
 }
 
 func (o *snapshotter) Commit(ctx context.Context, name, key string, opts ...snapshots.Opt) error {
@@ -406,6 +415,13 @@ func (o *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 		return nil, err
 	}
 
+	var base snapshots.Info
+	for _, opt := range opts {
+		if err := opt(&base); err != nil {
+			return nil, err
+		}
+	}
+
 	var td, path string
 	defer func() {
 		if err != nil {
@@ -472,7 +488,7 @@ func (o *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 		return nil, fmt.Errorf("commit failed: %w", err)
 	}
 
-	return o.mounts(s), nil
+	return o.mounts(&base, s), nil
 }
 
 func (o *snapshotter) prepareDirectory(ctx context.Context, snapshotDir string, kind snapshots.Kind) (string, error) {
@@ -494,7 +510,7 @@ func (o *snapshotter) prepareDirectory(ctx context.Context, snapshotDir string, 
 	return td, nil
 }
 
-func (o *snapshotter) mounts(s storage.Snapshot) []mount.Mount {
+func (o *snapshotter) mounts(info *snapshots.Info, s storage.Snapshot) []mount.Mount {
 	if len(s.ParentIDs) == 0 {
 		// if we only have one layer/no parents then just return a bind mount as overlay
 		// will not work
@@ -530,6 +546,9 @@ func (o *snapshotter) mounts(s storage.Snapshot) []mount.Mount {
 			fmt.Sprintf("workdir=%s", o.workPath(s.ID)),
 			fmt.Sprintf("upperdir=%s", o.upperPath(s.ID)),
 		)
+		if _, ok := info.Labels[volatileOpt]; ok {
+			options = append(options, "volatile")
+		}
 	} else if len(s.ParentIDs) == 1 {
 		return []mount.Mount{
 			{
