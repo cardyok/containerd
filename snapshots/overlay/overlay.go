@@ -41,6 +41,11 @@ import (
 // the change set between this snapshot and its parent is stored.
 const upperdirKey = "containerd.io/snapshot/overlay.upperdir"
 
+// activePath is a key of an optional label to active snapshot.
+// If this label is specified, content of this active snapshot(and subsequent rootfs write)
+// will be stored in the specified path.
+const activePath = "containerd.io/snapshot/overlay.active.path"
+
 // SnapshotterConfig is used to configure the overlay snapshotter instance
 type SnapshotterConfig struct {
 	asyncRemove   bool
@@ -393,13 +398,29 @@ func (o *snapshotter) getCleanupDirectories(ctx context.Context, t storage.Trans
 	return cleanup, nil
 }
 
+func getActivePath(info *snapshots.Info) (string, error) {
+	if info.Labels != nil {
+		if home, ok := info.Labels[activePath]; ok {
+			return home, nil
+		}
+	}
+	return "", fmt.Errorf("active snapshot path is not specified")
+}
+
 func (o *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, key, parent string, opts []snapshots.Opt) (_ []mount.Mount, err error) {
 	ctx, t, err := o.ms.TransactionContext(ctx, true)
 	if err != nil {
 		return nil, err
 	}
 
-	var td, path string
+	var base snapshots.Info
+	for _, opt := range opts {
+		if err := opt(&base); err != nil {
+			return nil, err
+		}
+	}
+
+	var td, path, snapshotDir string
 	defer func() {
 		if err != nil {
 			if td != "" {
@@ -416,7 +437,12 @@ func (o *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 		}
 	}()
 
-	snapshotDir := filepath.Join(o.root, "snapshots")
+	if homePath, err := getActivePath(&base); err == nil {
+		snapshotDir = homePath
+	} else {
+		snapshotDir = filepath.Join(o.root, "snapshots")
+	}
+	//TODO chaofeng: need error checking
 	td, err = o.prepareDirectory(ctx, snapshotDir, kind)
 	if err != nil {
 		if rerr := t.Rollback(); rerr != nil {
