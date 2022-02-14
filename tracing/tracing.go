@@ -18,6 +18,7 @@ package tracing
 
 import (
 	"context"
+	"google.golang.org/grpc/credentials/insecure"
 
 	srvconfig "github.com/containerd/containerd/services/server/config"
 	"github.com/pkg/errors"
@@ -60,10 +61,8 @@ func InitOpenTelemetry(config *srvconfig.Config) (func(), error) {
 
 	// Configure OTLP trace exporter and set it up to connect to OpenTelemetry collector
 	// running on a local host.
-	ctrdTraceExporter, err := otlptracegrpc.New(ctx,
-		otlptracegrpc.WithEndpoint(config.OpenTelemetry.ExporterEndpoint),
-		otlptracegrpc.WithDialOption(grpc.WithBlock()),
-	)
+	conn, err := grpc.DialContext(ctx, config.OpenTelemetry.ExporterEndpoint, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
+	ctrdTraceExporter, err := otlptracegrpc.New(ctx, otlptracegrpc.WithGRPCConn(conn))
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create trace exporter")
 	}
