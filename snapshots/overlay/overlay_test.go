@@ -77,6 +77,68 @@ func TestOverlay(t *testing.T) {
 	}
 }
 
+func TestGetActivePath(t *testing.T) {
+	il := &snapshots.Info{
+		Name: "testname",
+	}
+	il.Labels = make(map[string]string)
+	if _, err := getActivePath(il); err == nil {
+		t.Error("should return error when no home in labels")
+	}
+	il.Labels["home"] = "/tmp"
+	if home, err := getActivePath(il); err == nil {
+		if home != "/tmp/.rwlayer/testname" {
+			t.Error("home must be /tmp/.rwlayer/testname")
+		}
+	} else {
+		t.Error("should return home when home in labels")
+	}
+}
+
+func TestUpperPath(t *testing.T) {
+	il := &snapshots.Info{}
+	il.Labels = make(map[string]string)
+	ss := &snapshotter{}
+	ss.root = "aaa"
+	id := "xxx"
+	path := ss.upperPath(nil, id)
+	if path != filepath.Join(ss.root, "snapshots", id, "fs") {
+		t.Error("bad upper path")
+	}
+	path = ss.upperPath(il, id)
+	if path != filepath.Join(ss.root, "snapshots", id, "fs") {
+		t.Error("bad upper path")
+	}
+	home := "/tmp"
+	il.Labels["home"] = home
+	path = ss.upperPath(il, id)
+	if path != filepath.Join(home, id, "fs") {
+		t.Error("bad upper path")
+	}
+}
+
+func TestWorkPath(t *testing.T) {
+	il := &snapshots.Info{}
+	il.Labels = make(map[string]string)
+	ss := &snapshotter{}
+	ss.root = "aaa"
+	id := "xxx"
+	path := ss.workPath(nil, id)
+	if path != filepath.Join(ss.root, "snapshots", id, "work") {
+		t.Error("bad work path")
+	}
+	path = ss.workPath(il, id)
+	if path != filepath.Join(ss.root, "snapshots", id, "work") {
+		t.Error("bad work path")
+	}
+	home := "/tmp"
+	il.Labels["home"] = home
+	path = ss.workPath(il, id)
+	if path != filepath.Join(home, id, "work") {
+		t.Error("bad work path")
+	}
+}
+
 func testOverlayMounts(t *testing.T, newSnapshotter testsuite.SnapshotterFunc) {
 	ctx := context.TODO()
 	root := t.TempDir()

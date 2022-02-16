@@ -47,6 +47,11 @@ const upperdirKey = "containerd.io/snapshot/overlay.upperdir"
 // this snapshot will include volatile option
 const volatileOpt = "containerd.io/snapshot/overlay.volatile"
 
+// activePath is a key of an optional label to active snapshot.
+// If this label is specified, content of this active snapshot(and subsequent rootfs write)
+// will be stored in the specified path.
+const activePath = "containerd.io/snapshot/overlay.active.path"
+
 // SnapshotterConfig is used to configure the overlay snapshotter instance
 type SnapshotterConfig struct {
 	asyncRemove   bool
@@ -209,7 +214,7 @@ func (o *snapshotter) Usage(ctx context.Context, key string) (snapshots.Usage, e
 	}
 
 	if info.Kind == snapshots.KindActive {
-		upperPath := o.upperPath(id)
+		upperPath := o.upperPath(&info, id)
 		du, err := fs.DiskUsage(ctx, upperPath)
 		if err != nil {
 			// TODO(stevvooe): Consider not reporting an error in this case.
@@ -266,12 +271,12 @@ func (o *snapshotter) Commit(ctx context.Context, name, key string, opts ...snap
 	}()
 
 	// grab the existing id
-	id, _, _, err := storage.GetInfo(ctx, key)
+	id, info, _, err := storage.GetInfo(ctx, key)
 	if err != nil {
 		return err
 	}
 
-	usage, err := fs.DiskUsage(ctx, o.upperPath(id))
+	usage, err := fs.DiskUsage(ctx, o.upperPath(&info, id))
 	if err != nil {
 		return err
 	}
@@ -297,6 +302,21 @@ func (o *snapshotter) Remove(ctx context.Context, key string) (err error) {
 			}
 		}
 	}()
+
+	_, info, _, err := storage.GetInfo(ctx, key)
+	if err != nil {
+		if strings.Contains(err.Error(), "snapshot does not exist") {
+			return nil
+		}
+		return errors.Wrap(err, "failed to get snapshot info")
+	}
+
+	var home string
+	if home, err = getActivePath(&info); err == nil {
+		if err = os.RemoveAll(home); err != nil {
+			return errors.Wrapf(err, "failed to remove directory %v", home)
+		}
+	}
 
 	_, _, err = storage.Remove(ctx, key)
 	if err != nil {
@@ -409,6 +429,18 @@ func (o *snapshotter) getCleanupDirectories(ctx context.Context, t storage.Trans
 	return cleanup, nil
 }
 
+func getActivePath(info *snapshots.Info) (string, error) {
+	if info.Labels != nil {
+		if home, ok := info.Labels[activePath]; ok {
+			if info.Name == "" {
+				return filepath.Join(home, ".rwlayer", info.Created.String()), nil
+			}
+			return filepath.Join(home, ".rwlayer", info.Name), nil
+		}
+	}
+	return "", fmt.Errorf("active snapshot path is not specified")
+}
+
 func (o *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, key, parent string, opts []snapshots.Opt) (_ []mount.Mount, err error) {
 	ctx, t, err := o.ms.TransactionContext(ctx, true)
 	if err != nil {
@@ -421,8 +453,7 @@ func (o *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 			return nil, err
 		}
 	}
-
-	var td, path string
+	var td, path, snapshotDir string
 	defer func() {
 		if err != nil {
 			if td != "" {
@@ -439,7 +470,23 @@ func (o *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 		}
 	}()
 
-	snapshotDir := filepath.Join(o.root, "snapshots")
+	if homePath, err := getActivePath(&base); err == nil {
+		//TODO Chaofeng: This section will clear the rwlayer data on specified path to handle malfunctioning machine data leak.
+		//               Need a more elegant way to handle this
+		if _, err := os.Stat(homePath); err == nil {
+			if err = os.RemoveAll(homePath); err != nil {
+				logrus.WithError(err).Errorf("failed to cleanup %s created by last time", homePath)
+			}
+		}
+
+		if err = os.MkdirAll(homePath, 0711); err != nil {
+			return nil, err
+		}
+		snapshotDir = homePath
+	} else {
+		snapshotDir = filepath.Join(o.root, "snapshots")
+	}
+
 	td, err = o.prepareDirectory(ctx, snapshotDir, kind)
 	if err != nil {
 		if rerr := t.Rollback(); rerr != nil {
@@ -462,7 +509,7 @@ func (o *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 	}
 
 	if len(s.ParentIDs) > 0 {
-		st, err := os.Stat(o.upperPath(s.ParentIDs[0]))
+		st, err := os.Stat(o.upperPath(nil, s.ParentIDs[0]))
 		if err != nil {
 			return nil, fmt.Errorf("failed to stat parent: %w", err)
 		}
@@ -521,7 +568,7 @@ func (o *snapshotter) mounts(info *snapshots.Info, s storage.Snapshot) []mount.M
 
 		return []mount.Mount{
 			{
-				Source: o.upperPath(s.ID),
+				Source: o.upperPath(info, s.ID),
 				Type:   "bind",
 				Options: []string{
 					roFlag,
@@ -543,8 +590,8 @@ func (o *snapshotter) mounts(info *snapshots.Info, s storage.Snapshot) []mount.M
 
 	if s.Kind == snapshots.KindActive {
 		options = append(options,
-			fmt.Sprintf("workdir=%s", o.workPath(s.ID)),
-			fmt.Sprintf("upperdir=%s", o.upperPath(s.ID)),
+			fmt.Sprintf("workdir=%s", o.workPath(info, s.ID)),
+			fmt.Sprintf("upperdir=%s", o.upperPath(info, s.ID)),
 		)
 		if _, ok := info.Labels[volatileOpt]; ok {
 			options = append(options, "volatile")
@@ -552,7 +599,7 @@ func (o *snapshotter) mounts(info *snapshots.Info, s storage.Snapshot) []mount.M
 	} else if len(s.ParentIDs) == 1 {
 		return []mount.Mount{
 			{
-				Source: o.upperPath(s.ParentIDs[0]),
+				Source: o.upperPath(info, s.ParentIDs[0]),
 				Type:   "bind",
 				Options: []string{
 					"ro",
@@ -564,7 +611,7 @@ func (o *snapshotter) mounts(info *snapshots.Info, s storage.Snapshot) []mount.M
 
 	parentPaths := make([]string, len(s.ParentIDs))
 	for i := range s.ParentIDs {
-		parentPaths[i] = o.upperPath(s.ParentIDs[i])
+		parentPaths[i] = o.upperPath(nil, s.ParentIDs[i])
 	}
 
 	options = append(options, fmt.Sprintf("lowerdir=%s", strings.Join(parentPaths, ":")))
@@ -578,11 +625,23 @@ func (o *snapshotter) mounts(info *snapshots.Info, s storage.Snapshot) []mount.M
 
 }
 
-func (o *snapshotter) upperPath(id string) string {
+func (o *snapshotter) upperPath(info *snapshots.Info, id string) string {
+	if info != nil {
+		if home, err := getActivePath(info); err == nil {
+			//return path combined by home
+			return filepath.Join(home, id, "fs")
+		}
+	}
 	return filepath.Join(o.root, "snapshots", id, "fs")
 }
 
-func (o *snapshotter) workPath(id string) string {
+func (o *snapshotter) workPath(info *snapshots.Info, id string) string {
+	if info != nil {
+		if home, err := getActivePath(info); err == nil {
+			//return path combined by home
+			return filepath.Join(home, id, "work")
+		}
+	}
 	return filepath.Join(o.root, "snapshots", id, "work")
 }
 
