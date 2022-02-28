@@ -32,6 +32,7 @@ type Config struct {
 	// Root directory for the plugin
 	RootPath      string `toml:"root_path"`
 	UpperdirLabel bool   `toml:"upperdir_label"`
+	AsyncRemove   bool   `toml:"asyncRemove"`
 }
 
 func init() {
@@ -58,7 +59,11 @@ func init() {
 			}
 
 			ic.Meta.Exports["root"] = root
-			return overlay.NewSnapshotter(root, append(oOpts, overlay.AsynchronousRemove)...)
+
+			if config.AsyncRemove {
+				oOpts = append(oOpts, overlay.AsynchronousRemove)
+			}
+			return overlay.NewSnapshotter(root, oOpts...)
 		},
 	})
 }
