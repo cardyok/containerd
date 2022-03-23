@@ -102,6 +102,10 @@ type ContainerdConfig struct {
 	// IgnoreRdtNotEnabledErrors is a boolean flag to ignore RDT related errors
 	// when RDT support has not been enabled.
 	IgnoreRdtNotEnabledErrors bool `toml:"ignore_rdt_not_enabled_errors" json:"ignoreRdtNotEnabledErrors"`
+	// OverrideMountInfo turn on mtabl switch, when rw layer of containers are created, /etc/mtab is created as a
+	// symlink to /proc/mounts
+	// TODO(chaofeng): this feature should be removed in the future when all users have updated their df in container
+	OverrideMountInfo bool `toml:"mount_override" json:"mount_override"`
 }
 
 // CniConfig contains toml config related to cni

@@ -194,13 +194,13 @@ func (c *criService) CreateContainer(ctx context.Context, r *runtime.CreateConta
 		// rootfs readonly (requested by spec.Root.Readonly).
 		customopts.WithNewSnapshot(id, containerdImage, snapshotterOpt),
 	}
+	mountMap := make(map[string]string)
 	if len(volumeMounts) > 0 {
-		mountMap := make(map[string]string)
 		for _, v := range volumeMounts {
 			mountMap[filepath.Clean(v.HostPath)] = v.ContainerPath
 		}
-		opts = append(opts, customopts.WithVolumes(mountMap))
 	}
+	opts = append(opts, customopts.WithVolumes(mountMap, c.config.ContainerdConfig.OverrideMountInfo))
 	meta.ImageRef = image.ID
 	meta.StopSignal = image.ImageSpec.Config.StopSignal
 

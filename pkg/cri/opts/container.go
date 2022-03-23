@@ -25,13 +25,14 @@ import (
 	goruntime "runtime"
 	"strings"
 
+	"github.com/containerd/continuity/fs"
+
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/containers"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/snapshots"
-	"github.com/containerd/continuity/fs"
 )
 
 // WithNewSnapshot wraps `containerd.WithNewSnapshot` so that if creating the
@@ -56,7 +57,7 @@ func WithNewSnapshot(id string, i containerd.Image, opts ...snapshots.Opt) conta
 // WithVolumes copies ownership of volume in rootfs to its corresponding host path.
 // It doesn't update runtime spec.
 // The passed in map is a host path to container path map for all volumes.
-func WithVolumes(volumeMounts map[string]string) containerd.NewContainerOpts {
+func WithVolumes(volumeMounts map[string]string, overrideMountInfo bool) containerd.NewContainerOpts {
 	return func(ctx context.Context, client *containerd.Client, c *containers.Container) (err error) {
 		if c.Snapshotter == "" {
 			return errors.New("no snapshotter set for container")
@@ -72,7 +73,7 @@ func WithVolumes(volumeMounts map[string]string) containerd.NewContainerOpts {
 		// Since only read is needed, append ReadOnly mount option to prevent linux kernel
 		// from syncing whole filesystem in umount syscall.
 		if len(mounts) == 1 && mounts[0].Type == "overlay" {
-			mounts[0].Options = append(mounts[0].Options, "ro")
+			mounts[0].Options = append(mounts[0].Options, "rw")
 		}
 
 		root, err := os.MkdirTemp("", "ctd-volume")
@@ -112,6 +113,18 @@ func WithVolumes(volumeMounts map[string]string) containerd.NewContainerOpts {
 				return fmt.Errorf("failed to mount: %w", err)
 			}
 			defer unmounter(root)
+		}
+
+		// TODO(chaofeng): this symlink is used for supporting adb usage, obsolent df version in existing containers rely on
+		//				 this file. Related Aone: https://aone.alibaba-inc.com/v2/project/1118884/req/38695260
+		if overrideMountInfo {
+			linkName := filepath.Join(root, "/etc/mtab")
+			if err = os.RemoveAll(linkName); err != nil {
+				log.G(ctx).WithError(err).Errorf("failed to cleanup /etc/mtab in image")
+			}
+			if err := os.Symlink("/proc/mounts", linkName); err != nil {
+				log.G(ctx).WithError(err).Errorf("Failed to create symlink /etc/mtab")
+			}
 		}
 
 		for host, volume := range volumeMounts {
