@@ -26,12 +26,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containerd/containerd"
-	containerdio "github.com/containerd/containerd/cio"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/snapshots"
-	cni "github.com/containerd/go-cni"
+	"github.com/containerd/go-cni"
 	"github.com/containerd/nri"
 	v1 "github.com/containerd/nri/types/v1"
 	"github.com/containerd/typeurl"
@@ -39,6 +34,14 @@ import (
 	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
+
+	"github.com/containerd/containerd"
+	containerdio "github.com/containerd/containerd/cio"
+	"github.com/containerd/containerd/errdefs"
+	"github.com/containerd/containerd/log"
+	"github.com/containerd/containerd/snapshots"
+
+	selinux "github.com/opencontainers/selinux/go-selinux"
 
 	"github.com/containerd/containerd/pkg/cri/annotations"
 	criconfig "github.com/containerd/containerd/pkg/cri/config"
@@ -48,7 +51,6 @@ import (
 	"github.com/containerd/containerd/pkg/cri/util"
 	ctrdutil "github.com/containerd/containerd/pkg/cri/util"
 	"github.com/containerd/containerd/pkg/netns"
-	selinux "github.com/opencontainers/selinux/go-selinux"
 )
 
 func init() {
@@ -161,8 +163,13 @@ func (c *criService) RunPodSandbox(ctx context.Context, r *runtime.RunPodSandbox
 		return nil, fmt.Errorf("failed to generate runtime options: %w", err)
 	}
 	snapshotterOpt := snapshots.WithLabels(snapshots.FilterInheritedLabels(config.Annotations))
+	snapshotter, err := c.getSandboxSnapshotter(ctx, config, ociRuntime)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find snapshotter for sandbox: %w", err)
+	}
+	sandbox.Snapshotter = snapshotter
 	opts := []containerd.NewContainerOpts{
-		containerd.WithSnapshotter(c.config.ContainerdConfig.Snapshotter),
+		containerd.WithSnapshotter(snapshotter),
 		customopts.WithNewSnapshot(id, containerdImage, snapshotterOpt),
 		containerd.WithSpec(spec, specOpts...),
 		containerd.WithContainerLabels(sandboxLabels),
@@ -683,6 +690,21 @@ func (c *criService) getSandboxRuntime(config *runtime.PodSandboxConfig, runtime
 		return criconfig.Runtime{}, fmt.Errorf("no runtime for %q is configured", runtimeHandler)
 	}
 	return handler, nil
+}
+
+// getSandboxSnapshotter calculates appropriate snapshotter for the sandbox and containers in the sandbox
+// precedence level is: user specified annotation > specified label > runtime specified snapshotter in config file > default snapshotter
+func (c *criService) getSandboxSnapshotter(ctx context.Context, config *runtime.PodSandboxConfig, handler criconfig.Runtime) (string, error) {
+	if sn, err := getPodSnapshotter(config, c.snapshotters); err == nil || errdefs.IsNotFound(err) {
+		return sn, err
+	}
+	if handler.Snapshotter != "" {
+		if checkStringSlice(c.snapshotters, handler.Snapshotter) {
+			return handler.Snapshotter, nil
+		}
+	}
+	log.G(ctx).Debugf("snapshotter not found in annotation, label and default runtime %v in config file, use global default snapshotter %v", handler.Type, c.config.ContainerdConfig.Snapshotter)
+	return c.config.ContainerdConfig.Snapshotter, nil
 }
 
 func logDebugCNIResult(ctx context.Context, sandboxID string, result *cni.Result) {

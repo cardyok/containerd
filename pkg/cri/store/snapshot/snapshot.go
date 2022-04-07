@@ -45,8 +45,12 @@ type Store struct {
 }
 
 // NewStore creates a snapshot store.
-func NewStore() *Store {
-	return &Store{snapshots: make(map[string]Snapshot)}
+func NewStore(snapshotters []string) map[string]*Store {
+	snStore := make(map[string]*Store)
+	for _, sn := range snapshotters {
+		snStore[sn] = &Store{snapshots: make(map[string]Snapshot)}
+	}
+	return snStore
 }
 
 // Add a snapshot into the store.

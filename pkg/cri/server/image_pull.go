@@ -29,6 +29,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/containerd/imgcrypt"
+	"github.com/containerd/imgcrypt/images/encryption"
+	imagespec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/pkg/errors"
+	"golang.org/x/net/context"
+	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
+
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/errdefs"
 	containerdimages "github.com/containerd/containerd/images"
@@ -38,12 +45,8 @@ import (
 	distribution "github.com/containerd/containerd/reference/docker"
 	"github.com/containerd/containerd/remotes/docker"
 	"github.com/containerd/containerd/remotes/docker/config"
-	"github.com/containerd/imgcrypt"
-	"github.com/containerd/imgcrypt/images/encryption"
-	imagespec "github.com/opencontainers/image-spec/specs-go/v1"
-	"golang.org/x/net/context"
-	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 
+	"github.com/containerd/containerd/labels"
 	criconfig "github.com/containerd/containerd/pkg/cri/config"
 )
 
@@ -116,10 +119,20 @@ func (c *criService) PullImage(ctx context.Context, r *runtime.PullImageRequest)
 
 	labels := c.getLabels(ctx, ref)
 
+	//TODO(Chaofeng): very hack method, need to figure out a more elegant way
+	snapshotter := c.config.ContainerdConfig.Snapshotter
+	if sandboxConfig := r.GetSandboxConfig(); sandboxConfig != nil {
+		snapshotResult, err := c.getSnapshotterFromSandbox(ctx, sandboxConfig)
+		if err == nil {
+			snapshotter = snapshotResult
+		} else {
+			log.G(ctx).WithError(err).Infof("Failed to load snapshotter from sandbox %q", snapshotResult)
+		}
+	}
 	pullOpts := []containerd.RemoteOpt{
 		containerd.WithSchema1Conversion,
 		containerd.WithResolver(resolver),
-		containerd.WithPullSnapshotter(c.config.ContainerdConfig.Snapshotter),
+		containerd.WithPullSnapshotter(snapshotter),
 		containerd.WithPullUnpack,
 		containerd.WithPullLabels(labels),
 		containerd.WithMaxConcurrentDownloads(c.config.MaxConcurrentDownloads),
@@ -516,4 +529,98 @@ func (c *criService) encryptedImagesPullOpts() []containerd.RemoteOpt {
 		return []containerd.RemoteOpt{opt}
 	}
 	return nil
+}
+
+func (c *criService) getSnapshotterFromSandbox(ctx context.Context, sandboxConfig *runtime.PodSandboxConfig) (string, error) {
+	var err error
+	meta := sandboxConfig.GetMetadata()
+	if meta == nil {
+		return "", fmt.Errorf("metadata not found in sandbox config, cannot locate sandbox: %w", errdefs.ErrNotFound)
+	}
+	id, err := c.sandboxNameIndex.GetByKey(makeSandboxName(meta))
+	if err != nil {
+		log.G(ctx).Debugf("Failed to get sandbox ID")
+	}
+	var ociRuntime criconfig.Runtime
+	if sandbox, err := c.sandboxStore.Get(id); err == nil {
+		ociRuntime, err = c.getSandboxRuntime(sandboxConfig, sandbox.RuntimeHandler)
+		if err != nil {
+			return "", errors.Wrap(err, "Failed to get Sandbox Runtime.")
+		}
+	} else {
+		log.G(ctx).Debugf("Failed to find sandbox %q", id)
+	}
+
+	snapshotter, err := c.getSandboxSnapshotter(ctx, sandboxConfig, ociRuntime)
+	return snapshotter, errors.Wrap(err, "Failed to get snapshotter.")
+}
+
+const (
+	// targetRefLabel is a label which contains image reference and will be passed
+	// to snapshotters.
+	targetRefLabel = "containerd.io/snapshot/cri.image-ref"
+	// targetManifestDigestLabel is a label which contains manifest digest and will be passed
+	// to snapshotters.
+	targetManifestDigestLabel = "containerd.io/snapshot/cri.manifest-digest"
+	// targetLayerDigestLabel is a label which contains layer digest and will be passed
+	// to snapshotters.
+	targetLayerDigestLabel = "containerd.io/snapshot/cri.layer-digest"
+	// targetImageLayersLabel is a label which contains layer digests contained in
+	// the target image and will be passed to snapshotters for preparing layers in
+	// parallel. Skipping some layers is allowed and only affects performance.
+	targetImageLayersLabel = "containerd.io/snapshot/cri.image-layers"
+)
+
+// appendInfoHandlerWrapper makes a handler which appends some basic information
+// of images like digests for manifest and their child layers as annotations during unpack.
+// These annotations will be passed to snapshotters as labels. These labels will be
+// used mainly by stargz-based snapshotters for querying image contents from the
+// registry.
+func appendInfoHandlerWrapper(ref string) func(f containerdimages.Handler) containerdimages.Handler {
+	return func(f containerdimages.Handler) containerdimages.Handler {
+		return containerdimages.HandlerFunc(func(ctx context.Context, desc imagespec.Descriptor) ([]imagespec.Descriptor, error) {
+			children, err := f.Handle(ctx, desc)
+			if err != nil {
+				return nil, err
+			}
+			switch desc.MediaType {
+			case imagespec.MediaTypeImageManifest, containerdimages.MediaTypeDockerSchema2Manifest:
+				for i := range children {
+					c := &children[i]
+					if containerdimages.IsLayerType(c.MediaType) {
+						if c.Annotations == nil {
+							c.Annotations = make(map[string]string)
+						}
+						c.Annotations[targetRefLabel] = ref
+						c.Annotations[targetLayerDigestLabel] = c.Digest.String()
+						c.Annotations[targetImageLayersLabel] = getLayers(ctx, targetImageLayersLabel, children[i:], labels.Validate)
+						c.Annotations[targetManifestDigestLabel] = desc.Digest.String()
+					}
+				}
+			}
+			return children, nil
+		})
+	}
+}
+
+// getLayers returns comma-separated digests based on the passed list of
+// descriptors. The returned list contains as many digests as possible as well
+// as meets the label validation.
+func getLayers(ctx context.Context, key string, descs []imagespec.Descriptor, validate func(k, v string) error) (layers string) {
+	var item string
+	for _, l := range descs {
+		if containerdimages.IsLayerType(l.MediaType) {
+			item = l.Digest.String()
+			if layers != "" {
+				item = "," + item
+			}
+			// This avoids the label hits the size limitation.
+			if err := validate(key, layers+item); err != nil {
+				log.G(ctx).WithError(err).WithField("label", key).Debugf("%q is omitted in the layers list", l.Digest.String())
+				break
+			}
+			layers += item
+		}
+	}
+	return
 }

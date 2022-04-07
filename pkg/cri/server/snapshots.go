@@ -21,9 +21,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/sirupsen/logrus"
+
 	"github.com/containerd/containerd/errdefs"
 	snapshot "github.com/containerd/containerd/snapshots"
-	"github.com/sirupsen/logrus"
 
 	snapshotstore "github.com/containerd/containerd/pkg/cri/store/snapshot"
 	ctrdutil "github.com/containerd/containerd/pkg/cri/util"
@@ -34,18 +35,20 @@ import (
 // TODO(random-liu): Benchmark with high workload. We may need a statsSyncer instead if
 // benchmark result shows that container cpu/memory stats also need to be cached.
 type snapshotsSyncer struct {
-	store       *snapshotstore.Store
-	snapshotter snapshot.Snapshotter
-	syncPeriod  time.Duration
+	store           map[string]*snapshotstore.Store
+	snapshotter     map[string]snapshot.Snapshotter
+	snapshotterList []string
+	syncPeriod      time.Duration
 }
 
 // newSnapshotsSyncer creates a snapshot syncer.
-func newSnapshotsSyncer(store *snapshotstore.Store, snapshotter snapshot.Snapshotter,
+func newSnapshotsSyncer(store map[string]*snapshotstore.Store, snapshotterList []string, snapshotter map[string]snapshot.Snapshotter,
 	period time.Duration) *snapshotsSyncer {
 	return &snapshotsSyncer{
-		store:       store,
-		snapshotter: snapshotter,
-		syncPeriod:  period,
+		store:           store,
+		snapshotter:     snapshotter,
+		snapshotterList: snapshotterList,
+		syncPeriod:      period,
 	}
 }
 
@@ -69,52 +72,54 @@ func (s *snapshotsSyncer) start() {
 
 // sync updates all snapshots stats.
 func (s *snapshotsSyncer) sync() error {
-	ctx := ctrdutil.NamespacedContext()
-	start := time.Now().UnixNano()
-	var snapshots []snapshot.Info
-	// Do not call `Usage` directly in collect function, because
-	// `Usage` takes time, we don't want `Walk` to hold read lock
-	// of snapshot metadata store for too long time.
-	// TODO(random-liu): Set timeout for the following 2 contexts.
-	if err := s.snapshotter.Walk(ctx, func(ctx context.Context, info snapshot.Info) error {
-		snapshots = append(snapshots, info)
-		return nil
-	}); err != nil {
-		return fmt.Errorf("walk all snapshots failed: %w", err)
-	}
-	for _, info := range snapshots {
-		sn, err := s.store.Get(info.Name)
-		if err == nil {
-			// Only update timestamp for non-active snapshot.
-			if sn.Kind == info.Kind && sn.Kind != snapshot.KindActive {
-				sn.Timestamp = time.Now().UnixNano()
-				s.store.Add(sn)
+	for _, snName := range s.snapshotterList {
+		ctx := ctrdutil.NamespacedContext()
+		start := time.Now().UnixNano()
+		var snapshots []snapshot.Info
+		// Do not call `Usage` directly in collect function, because
+		// `Usage` takes time, we don't want `Walk` to hold read lock
+		// of snapshot metadata store for too long time.
+		// TODO(random-liu): Set timeout for the following 2 contexts.
+		if err := s.snapshotter[snName].Walk(ctx, func(ctx context.Context, info snapshot.Info) error {
+			snapshots = append(snapshots, info)
+			return nil
+		}); err != nil {
+			return fmt.Errorf("walk all snapshots failed: %w", err)
+		}
+		for _, info := range snapshots {
+			sn, err := s.store[snName].Get(info.Name)
+			if err == nil {
+				// Only update timestamp for non-active snapshot.
+				if sn.Kind == info.Kind && sn.Kind != snapshot.KindActive {
+					sn.Timestamp = time.Now().UnixNano()
+					s.store[snName].Add(sn)
+					continue
+				}
+			}
+			// Get newest stats if the snapshot is new or active.
+			sn = snapshotstore.Snapshot{
+				Key:       info.Name,
+				Kind:      info.Kind,
+				Timestamp: time.Now().UnixNano(),
+			}
+			usage, err := s.snapshotter[snName].Usage(ctx, info.Name)
+			if err != nil {
+				if !errdefs.IsNotFound(err) {
+					logrus.WithError(err).Errorf("Failed to get usage for snapshot %q", info.Name)
+				}
 				continue
 			}
+			sn.Size = uint64(usage.Size)
+			sn.Inodes = uint64(usage.Inodes)
+			s.store[snName].Add(sn)
 		}
-		// Get newest stats if the snapshot is new or active.
-		sn = snapshotstore.Snapshot{
-			Key:       info.Name,
-			Kind:      info.Kind,
-			Timestamp: time.Now().UnixNano(),
-		}
-		usage, err := s.snapshotter.Usage(ctx, info.Name)
-		if err != nil {
-			if !errdefs.IsNotFound(err) {
-				logrus.WithError(err).Errorf("Failed to get usage for snapshot %q", info.Name)
+		for _, sn := range s.store[snName].List() {
+			if sn.Timestamp >= start {
+				continue
 			}
-			continue
+			// Delete the snapshot stats if it's not updated this time.
+			s.store[snName].Delete(sn.Key)
 		}
-		sn.Size = uint64(usage.Size)
-		sn.Inodes = uint64(usage.Inodes)
-		s.store.Add(sn)
-	}
-	for _, sn := range s.store.List() {
-		if sn.Timestamp >= start {
-			continue
-		}
-		// Delete the snapshot stats if it's not updated this time.
-		s.store.Delete(sn.Key)
 	}
 	return nil
 }

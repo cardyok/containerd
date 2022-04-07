@@ -62,6 +62,8 @@ type Metadata struct {
 	CNIResult *cni.Result
 	// ProcessLabel is the SELinux process label for the container
 	ProcessLabel string
+	// Snapshotter is the snapshotter used by sandbox
+	Snapshotter string
 }
 
 // MarshalJSON encodes Metadata into bytes in json format.

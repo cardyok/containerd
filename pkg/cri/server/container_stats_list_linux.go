@@ -20,11 +20,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/containerd/containerd/api/types"
-	v1 "github.com/containerd/containerd/metrics/types/v1"
-	v2 "github.com/containerd/containerd/metrics/types/v2"
 	"github.com/containerd/typeurl"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
+
+	"github.com/containerd/containerd/api/types"
+	"github.com/containerd/containerd/errdefs"
+	v1 "github.com/containerd/containerd/metrics/types/v1"
+	v2 "github.com/containerd/containerd/metrics/types/v2"
 
 	containerstore "github.com/containerd/containerd/pkg/cri/store/container"
 	stats "github.com/containerd/containerd/pkg/cri/store/stats"
@@ -36,17 +38,22 @@ func (c *criService) containerMetrics(
 ) (*runtime.ContainerStats, error) {
 	var cs runtime.ContainerStats
 	var usedBytes, inodesUsed uint64
-	sn, err := c.snapshotStore.Get(meta.ID)
+	var timestamp int64
+	if _, ok := c.snapshotStore[meta.Snapshotter]; !ok {
+		return nil, fmt.Errorf("snapshotter %v not found: %w", meta.Snapshotter, errdefs.ErrNotFound)
+	}
+	sn, err := c.snapshotStore[meta.Snapshotter].Get(meta.ID)
 	// If snapshotstore doesn't have cached snapshot information
 	// set WritableLayer usage to zero
 	if err == nil {
 		usedBytes = sn.Size
 		inodesUsed = sn.Inodes
+		timestamp = sn.Timestamp
 	}
 	cs.WritableLayer = &runtime.FilesystemUsage{
-		Timestamp: sn.Timestamp,
+		Timestamp: timestamp,
 		FsId: &runtime.FilesystemIdentifier{
-			Mountpoint: c.imageFSPath,
+			Mountpoint: c.imageFSPath[meta.Snapshotter],
 		},
 		UsedBytes:  &runtime.UInt64Value{Value: usedBytes},
 		InodesUsed: &runtime.UInt64Value{Value: inodesUsed},

@@ -70,6 +70,8 @@ type Runtime struct {
 	// HookConfigDir defines the dir storing oci-hook configurations (if any) for this runtime.
 	// After introducing NRI this field is still needed to inject hooks, nri will be used for adjusting hooks (not initializing)
 	HookConfigDir string `toml:"hook_config_dir" json:"hook_config_dir"`
+	// Snapshotter defines the default recommended to be used by this runtime.
+	Snapshotter string `toml:"snapshotter" json:"snapshotter"`
 }
 
 // ContainerdConfig contains toml config related to containerd

@@ -26,7 +26,7 @@ func TestCalculateFreeSizeLogic(t *testing.T) {
 		LowThresholdPercent:  1,
 		MinAge:               10 * time.Second,
 		Whitelist:            []string{"pause"},
-	}, cwdPath)
+	}, map[string]string{"testSnapshotter":cwdPath}, "testSnapshotter")
 	if err != nil {
 		t.Fatalf("failed to new gc instance: %v", err)
 	}

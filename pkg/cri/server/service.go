@@ -52,6 +52,7 @@ import (
 	"github.com/containerd/containerd/pkg/registrar"
 	"github.com/containerd/containerd/pkg/timeout"
 	"github.com/containerd/containerd/plugin"
+	snapshot "github.com/containerd/containerd/snapshots"
 )
 
 const (
@@ -93,8 +94,8 @@ type CRIService interface {
 type criService struct {
 	// config contains all configurations.
 	config criconfig.Config
-	// imageFSPath is the path to image filesystem.
-	imageFSPath string
+	// imageFSPath is the path to image filesystem for each snapshotter.
+	imageFSPath map[string]string
 	// os is an interface for all required os operations.
 	os osinterface.OS
 	// sandboxStore stores all resources associated with sandboxes.
@@ -110,7 +111,7 @@ type criService struct {
 	// imageStore stores all resources associated with images.
 	imageStore *imagestore.Store
 	// snapshotStore stores information of all snapshots.
-	snapshotStore *snapshotstore.Store
+	snapshotStore map[string]*snapshotstore.Store
 	// netPlugin is used to setup and teardown network when run/stop pod sandbox.
 	netPlugin map[string]cni.CNI
 	// client is an instance of the containerd client
@@ -134,6 +135,8 @@ type criService struct {
 	// one in-flight fetch request or unpack handler for a given descriptor's
 	// or chain ID.
 	unpackDuplicationSuppressor kmutex.KeyedLocker
+	// snapshotters is list of all snapshot plugins used by containerd
+	snapshotters []string
 	// related to image gc
 	imageGCHandler imagegcplugin.GarbageCollect
 	imageGCSwitch  imagegcplugin.Status
@@ -144,26 +147,40 @@ type criService struct {
 func NewCRIService(config criconfig.Config, client *containerd.Client) (CRIService, error) {
 	var err error
 	labels := label.NewStore()
+
+	//Load active snapshot plugins from containerd
+	ps := client.IntrospectionService()
+	filters := []string{"type==io.containerd.snapshotter.v1,status==ok"}
+	response, err := ps.Plugins(context.Background(), filters)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get snapshot list: %w", err)
+	}
+	snapshotters := []string{}
+	for _, plugins := range response.Plugins {
+		snapshotters = append(snapshotters, plugins.ID)
+	}
+
 	c := &criService{
 		config:                      config,
 		client:                      client,
 		os:                          osinterface.RealOS{},
 		sandboxStore:                sandboxstore.NewStore(labels),
 		containerStore:              containerstore.NewStore(labels),
-		imageStore:                  imagestore.NewStore(client),
-		snapshotStore:               snapshotstore.NewStore(),
+		imageStore:                  imagestore.NewStore(client, snapshotters),
+		snapshotStore:               snapshotstore.NewStore(snapshotters),
 		sandboxNameIndex:            registrar.NewRegistrar(),
 		containerNameIndex:          registrar.NewRegistrar(),
 		initialized:                 atomic.NewBool(false),
 		netPlugin:                   make(map[string]cni.CNI),
 		unpackDuplicationSuppressor: kmutex.New(),
+		snapshotters:                snapshotters,
 	}
 
 	if client.SnapshotService(c.config.ContainerdConfig.Snapshotter) == nil {
 		return nil, fmt.Errorf("failed to find snapshotter %q", c.config.ContainerdConfig.Snapshotter)
 	}
 
-	c.imageFSPath = imageFSPath(config.ContainerdRootDir, config.ContainerdConfig.Snapshotter)
+	c.imageFSPath = imageFSPath(config.ContainerdRootDir, snapshotters)
 	logrus.Infof("Get image filesystem path %q", c.imageFSPath)
 
 	if err := c.initPlatform(); err != nil {
@@ -235,9 +252,14 @@ func (c *criService) Run(ready func()) error {
 
 	// Start snapshot stats syncer, it doesn't need to be stopped.
 	logrus.Info("Start snapshots syncer")
+	syncerSnServices := make(map[string]snapshot.Snapshotter)
+	for _, sn := range c.snapshotters {
+		syncerSnServices[sn] = c.client.SnapshotService(sn)
+	}
 	snapshotsSyncer := newSnapshotsSyncer(
 		c.snapshotStore,
-		c.client.SnapshotService(c.config.ContainerdConfig.Snapshotter),
+		c.snapshotters,
+		syncerSnServices,
 		time.Duration(c.config.StatsCollectPeriod)*time.Second,
 	)
 	snapshotsSyncer.start()
@@ -414,8 +436,12 @@ func (c *criService) register(s *grpc.Server) error {
 
 // imageFSPath returns containerd image filesystem path.
 // Note that if containerd changes directory layout, we also needs to change this.
-func imageFSPath(rootDir, snapshotter string) string {
-	return filepath.Join(rootDir, fmt.Sprintf("%s.%s", plugin.SnapshotPlugin, snapshotter))
+func imageFSPath(rootDir string, snapshotters []string) map[string]string {
+	ret := make(map[string]string)
+	for _, snapshotter := range snapshotters {
+		ret[snapshotter] = filepath.Join(rootDir, fmt.Sprintf("%s.%s", plugin.SnapshotPlugin, snapshotter))
+	}
+	return ret
 }
 
 func loadOCISpec(filename string) (*oci.Spec, error) {
@@ -473,6 +499,7 @@ func (c *criService) InitImageGC(switchStatus imagegcplugin.Status) error {
 		imagegcplugin.NewCRIRuntime(c),
 		gcpolicy,
 		c.imageFSPath,
+		c.config.ContainerdConfig.Snapshotter,
 	)
 	if err != nil {
 		return err

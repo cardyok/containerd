@@ -21,11 +21,11 @@ import (
 	"os"
 	"testing"
 
-	"github.com/containerd/containerd/oci"
 	"github.com/containerd/go-cni"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/containerd/containerd/oci"
 	criconfig "github.com/containerd/containerd/pkg/cri/config"
 	servertesting "github.com/containerd/containerd/pkg/cri/server/testing"
 	containerstore "github.com/containerd/containerd/pkg/cri/store/container"
@@ -59,11 +59,11 @@ func newTestCRIService() *criService {
 				TolerateMissingHugetlbController: true,
 			},
 		},
-		imageFSPath:        testImageFSPath,
+		imageFSPath:        map[string]string{"overlayfs": testImageFSPath},
 		os:                 ostesting.NewFakeOS(),
 		sandboxStore:       sandboxstore.NewStore(labels),
-		imageStore:         imagestore.NewStore(nil),
-		snapshotStore:      snapshotstore.NewStore(),
+		imageStore:         imagestore.NewStore(nil, nil),
+		snapshotStore:      snapshotstore.NewStore([]string{"overlayfs"}),
 		sandboxNameIndex:   registrar.NewRegistrar(),
 		containerStore:     containerstore.NewStore(labels),
 		containerNameIndex: registrar.NewRegistrar(),

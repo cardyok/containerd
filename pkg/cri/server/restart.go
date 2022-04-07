@@ -24,22 +24,22 @@ import (
 	"sync"
 	"time"
 
-	"github.com/containerd/containerd"
-	containerdio "github.com/containerd/containerd/cio"
-	"github.com/containerd/containerd/errdefs"
-	containerdimages "github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/platforms"
 	"github.com/containerd/typeurl"
 	"golang.org/x/net/context"
 	"golang.org/x/sync/errgroup"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 
+	"github.com/containerd/containerd"
+	containerdio "github.com/containerd/containerd/cio"
+	"github.com/containerd/containerd/errdefs"
+	containerdimages "github.com/containerd/containerd/images"
+	"github.com/containerd/containerd/log"
 	cio "github.com/containerd/containerd/pkg/cri/io"
 	containerstore "github.com/containerd/containerd/pkg/cri/store/container"
 	sandboxstore "github.com/containerd/containerd/pkg/cri/store/sandbox"
 	ctrdutil "github.com/containerd/containerd/pkg/cri/util"
 	"github.com/containerd/containerd/pkg/netns"
+	"github.com/containerd/containerd/platforms"
 )
 
 // NOTE: The recovery logic has following assumption: when the cri plugin is down:
@@ -333,6 +333,11 @@ func (c *criService) loadContainer(ctx context.Context, cntr containerd.Containe
 		containerstore.WithStatus(status, containerDir),
 		containerstore.WithContainer(cntr),
 	}
+	if cntrInfo, err := cntr.Info(ctx); err == nil {
+		if cntrInfo.Snapshotter != "" {
+			opts = append(opts, containerstore.WithSnapshotter(cntrInfo.Snapshotter))
+		}
+	}
 	// containerIO could be nil for container in unknown state.
 	if containerIO != nil {
 		opts = append(opts, containerstore.WithContainerIO(containerIO))
@@ -437,6 +442,11 @@ func (c *criService) loadSandbox(ctx context.Context, cntr containerd.Container)
 	}
 	sandbox.NetNS = netns.LoadNetNS(meta.NetNSPath)
 
+	//Load sandbox snapshotter
+	if cntrInfo, err := cntr.Info(ctx); err == nil {
+		sandbox.Snapshotter = cntrInfo.Snapshotter
+	}
+
 	// It doesn't matter whether task is running or not. If it is running, sandbox
 	// status will be `READY`; if it is not running, sandbox status will be `NOT_READY`,
 	// kubelet will stop the sandbox which will properly cleanup everything.
@@ -445,7 +455,6 @@ func (c *criService) loadSandbox(ctx context.Context, cntr containerd.Container)
 
 // loadImages loads images from containerd.
 func (c *criService) loadImages(ctx context.Context, cImages []containerd.Image) {
-	snapshotter := c.config.ContainerdConfig.Snapshotter
 	var wg sync.WaitGroup
 	for _, i := range cImages {
 		wg.Add(1)
@@ -462,7 +471,17 @@ func (c *criService) loadImages(ctx context.Context, cImages []containerd.Image)
 				return
 			}
 			// Checking existence of top-level snapshot for each image being recovered.
-			unpacked, err := i.IsUnpacked(ctx, snapshotter)
+			unpacked := false
+			for _, snapshotter := range c.snapshotters {
+				unpacked, err = i.IsUnpacked(ctx, snapshotter)
+				if err != nil {
+					log.G(ctx).WithError(err).Warnf("Failed to check whether image is unpacked for image %s", i.Name())
+					break
+				}
+				if unpacked {
+					break
+				}
+			}
 			if err != nil {
 				log.G(ctx).WithError(err).Warnf("Failed to check whether image is unpacked for image %s", i.Name())
 				return

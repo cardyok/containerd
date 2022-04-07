@@ -30,7 +30,7 @@ type imageGCHandler struct {
 }
 
 // NewImageGarbageCollect returns GarbageCollect instance.
-func NewImageGarbageCollect(criruntime CRIRuntime, policy GcPolicy, imageFSPath string) (GarbageCollect, error) {
+func NewImageGarbageCollect(criruntime CRIRuntime, policy GcPolicy, imageFSPath map[string]string, snapshotter string) (GarbageCollect, error) {
 	var err error
 	if err = validateGCPolicy(policy); err != nil {
 		return nil, err
@@ -44,7 +44,7 @@ func NewImageGarbageCollect(criruntime CRIRuntime, policy GcPolicy, imageFSPath 
 		}
 	}
 
-	info, err := mount.Lookup(imageFSPath)
+	info, err := mount.Lookup(imageFSPath[snapshotter])
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to lookup image fs path in mountinfo")
 	}
@@ -53,7 +53,7 @@ func NewImageGarbageCollect(criruntime CRIRuntime, policy GcPolicy, imageFSPath 
 		criruntime:        criruntime,
 		policy:            policy,
 		whitelistGoRegex:  whitelistGoRegex,
-		imageFSPath:       imageFSPath,
+		imageFSPath:       imageFSPath[snapshotter],
 		imageFSMountpoint: info.Mountpoint,
 		images:            make(map[string]*imageRecord),
 	}, nil

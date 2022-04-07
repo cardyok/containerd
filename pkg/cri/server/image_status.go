@@ -19,14 +19,16 @@ package server
 import (
 	"encoding/json"
 	"fmt"
-
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/log"
-	imagestore "github.com/containerd/containerd/pkg/cri/store/image"
+	"strconv"
 
 	imagespec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/net/context"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
+
+	"github.com/containerd/containerd/errdefs"
+	"github.com/containerd/containerd/log"
+	"github.com/containerd/containerd/pkg/cri/annotations"
+	imagestore "github.com/containerd/containerd/pkg/cri/store/image"
 )
 
 // ImageStatus returns the status of the image, returns nil if the image isn't present.
@@ -43,6 +45,45 @@ func (c *criService) ImageStatus(ctx context.Context, r *runtime.ImageStatusRequ
 	}
 	// TODO(random-liu): [P0] Make sure corresponding snapshot exists. What if snapshot
 	// doesn't exist?
+	if err := func() error {
+		var snapshotter string
+
+		sandboxAnno := r.GetImage().GetAnnotations()
+		if sandboxAnno == nil {
+			return nil
+		}
+		if sandboxAnno[annotations.PodName] == "" || sandboxAnno[annotations.PodUid] == "" || sandboxAnno[annotations.PodNamespace] == "" || sandboxAnno[annotations.PodAttempt] == "" {
+			return nil
+		}
+		attempt, err := strconv.ParseInt(sandboxAnno[annotations.PodAttempt], 10, 32)
+		if err != nil {
+			return fmt.Errorf("failed to parse pod attempt to locate sandbox: %w", errdefs.ErrInvalidArgument)
+		}
+		if snapshotter, err = c.getSnapshotterFromSandbox(ctx, &runtime.PodSandboxConfig{
+			Annotations: sandboxAnno,
+			Metadata: &runtime.PodSandboxMetadata{
+				Name:      sandboxAnno[annotations.PodName],
+				Uid:       sandboxAnno[annotations.PodUid],
+				Namespace: sandboxAnno[annotations.PodNamespace],
+				Attempt:   uint32(attempt),
+			},
+		}); err != nil {
+			return nil
+		}
+		var found bool
+		for _, sn := range image.Snapshotters {
+			if sn == snapshotter {
+				found = true
+			}
+		}
+		if !found {
+			log.G(ctx).Debugf("ImageStatus: Image %v is not unpacked for %v", r.GetImage().GetImage(), snapshotter)
+			return errdefs.ErrNotFound
+		}
+		return nil
+	}(); err != nil {
+		return &runtime.ImageStatusResponse{}, nil
+	}
 
 	runtimeImage := toCRIImage(image)
 	info, err := c.toCRIImageInfo(ctx, &image, r.GetVerbose())

@@ -22,17 +22,18 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/gogo/googleapis/google/rpc"
+	ptypes "github.com/gogo/protobuf/types"
+	"github.com/google/uuid"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/status"
+
 	api "github.com/containerd/containerd/api/services/introspection/v1"
 	"github.com/containerd/containerd/api/types"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/filters"
 	"github.com/containerd/containerd/plugin"
 	"github.com/containerd/containerd/services"
-	"github.com/gogo/googleapis/google/rpc"
-	ptypes "github.com/gogo/protobuf/types"
-	"github.com/google/uuid"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/status"
 )
 
 func init() {
@@ -160,6 +161,12 @@ func adaptPlugin(o interface{}) filters.Adaptor {
 			return obj.Type, len(obj.Type) > 0
 		case "id":
 			return obj.ID, len(obj.ID) > 0
+		case "status":
+			if obj.InitErr == nil {
+				return "ok", obj.InitErr == nil
+			} else {
+				return "Error", obj.InitErr != nil
+			}
 		case "platforms":
 			// TODO(stevvooe): Another case here where have multiple values.
 			// May need to refactor the filter system to allow filtering by

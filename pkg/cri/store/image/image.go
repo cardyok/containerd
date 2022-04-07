@@ -49,6 +49,8 @@ type Image struct {
 	ImageSpec imagespec.Image
 	// Pinned image to prevent it from garbage collection
 	Pinned bool
+	// Snapshotters is list of all active snapshotters in containerd
+	Snapshotters []string
 }
 
 // Store stores all images.
@@ -60,10 +62,12 @@ type Store struct {
 	client *containerd.Client
 	// store is the internal image store indexed by image id.
 	store *store
+	// snapshotters is list of active snapshotters in containerd.
+	snapshotters []string
 }
 
 // NewStore creates an image store.
-func NewStore(client *containerd.Client) *Store {
+func NewStore(client *containerd.Client, snapshotters []string) *Store {
 	return &Store{
 		refCache: make(map[string]string),
 		client:   client,
@@ -71,6 +75,7 @@ func NewStore(client *containerd.Client) *Store {
 			images:    make(map[string]Image),
 			digestSet: digestset.NewSet(),
 		},
+		snapshotters: snapshotters,
 	}
 }
 
@@ -84,7 +89,7 @@ func (s *Store) Update(ctx context.Context, ref string) error {
 	}
 	var img *Image
 	if err == nil {
-		img, err = getImage(ctx, i)
+		img, err = getImage(ctx, i, s.snapshotters)
 		if err != nil {
 			return fmt.Errorf("get image info from containerd: %w", err)
 		}
@@ -106,9 +111,6 @@ func (s *Store) update(ref string, img *Image) error {
 		return nil
 	}
 	if oldExist {
-		if oldID == img.ID {
-			return nil
-		}
 		// Updated. Remove tag from old image.
 		s.store.delete(oldID, ref)
 	}
@@ -118,7 +120,7 @@ func (s *Store) update(ref string, img *Image) error {
 }
 
 // getImage gets image information from containerd.
-func getImage(ctx context.Context, i containerd.Image) (*Image, error) {
+func getImage(ctx context.Context, i containerd.Image, snapshotters []string) (*Image, error) {
 	// Get image information.
 	diffIDs, err := i.RootFS(ctx)
 	if err != nil {
@@ -137,6 +139,13 @@ func getImage(ctx context.Context, i containerd.Image) (*Image, error) {
 	}
 	id := desc.Digest.String()
 
+	var activeSnapshotters []string
+	for _, snapshot := range snapshotters {
+		if unpacked, err := i.IsUnpacked(ctx, snapshot); err == nil && unpacked {
+			activeSnapshotters = append(activeSnapshotters, snapshot)
+		}
+	}
+
 	rb, err := content.ReadBlob(ctx, i.ContentStore(), desc)
 	if err != nil {
 		return nil, fmt.Errorf("read image config from content store: %w", err)
@@ -149,12 +158,13 @@ func getImage(ctx context.Context, i containerd.Image) (*Image, error) {
 	pinned := i.Labels()[labels.PinnedImageLabelKey] == labels.PinnedImageLabelValue
 
 	return &Image{
-		ID:         id,
-		References: []string{i.Name()},
-		ChainID:    chainID.String(),
-		Size:       size,
-		ImageSpec:  ociimage,
-		Pinned:     pinned,
+		ID:           id,
+		References:   []string{i.Name()},
+		ChainID:      chainID.String(),
+		Size:         size,
+		ImageSpec:    ociimage,
+		Pinned:       pinned,
+		Snapshotters: activeSnapshotters,
 	}, nil
 
 }
@@ -218,6 +228,7 @@ func (s *store) add(img Image) error {
 	}
 	// Or else, merge and sort the references.
 	i.References = sortReferences(util.MergeStringSlices(i.References, img.References))
+	i.Snapshotters = img.Snapshotters
 	s.images[img.ID] = i
 	return nil
 }

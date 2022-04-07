@@ -85,6 +85,14 @@ func WithStatus(status Status, root string) Opts {
 	}
 }
 
+// WithSnapshotter adds snapshotter to the container.
+func WithSnapshotter(sn string) Opts {
+	return func(c *Container) error {
+		c.Snapshotter = sn
+		return nil
+	}
+}
+
 // NewContainer creates an internally used container type.
 func NewContainer(metadata Metadata, opts ...Opts) (Container, error) {
 	c := Container{
