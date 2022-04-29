@@ -130,6 +130,11 @@ func (m *ShimManager) loadShims(ctx context.Context) error {
 			})
 		shim, err := loadShim(ctx, runtime, bundle, func() {
 			log.G(ctx).WithField("id", id).Info("shim disconnected")
+			if task, getErr := m.shims.Get(ctx, id); getErr == nil {
+				if err := m.monitor.Stop(task); err != nil {
+					log.G(ctx).Errorf("Failed to remove task %q from monitor list: %v", id, err)
+				}
+			}
 
 			cleanupAfterDeadShim(context.Background(), id, ns, m.shims, m.events, binaryCall)
 			// Remove self from the runtime task list.

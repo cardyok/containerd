@@ -58,6 +58,7 @@ func init() {
 		Requires: []plugin.Type{
 			plugin.EventPlugin,
 			plugin.MetadataPlugin,
+			plugin.TaskMonitorPlugin,
 		},
 		Config: &Config{
 			Platforms: defaultPlatforms(),
@@ -85,6 +86,10 @@ func init() {
 			for runtimeType, loggerConfig := range ic.Config.(*Config).ShimLoggingDir {
 				logging.SetShimLogger(context.Background(), loggerConfig, runtimeType)
 			}
+			monitor, err := ic.Get(plugin.TaskMonitorPlugin)
+			if err != nil {
+				return nil, err
+			}
 			shimManager, err := NewShimManager(ic.Context, &ManagerConfig{
 				Root:         ic.Root,
 				State:        ic.State,
@@ -93,6 +98,7 @@ func init() {
 				Events:       events,
 				Store:        cs,
 				SchedCore:    config.SchedCore,
+				taskMonitor:  monitor.(runtime.TaskMonitor),
 			})
 			if err != nil {
 				return nil, err
@@ -108,6 +114,7 @@ type ManagerConfig struct {
 	State        string
 	Store        containers.Store
 	Events       *exchange.Exchange
+	taskMonitor  runtime.TaskMonitor
 	Address      string
 	TTRPCAddress string
 	SchedCore    bool
@@ -130,6 +137,7 @@ func NewShimManager(ctx context.Context, config *ManagerConfig) (*ShimManager, e
 		events:                 config.Events,
 		containers:             config.Store,
 		schedCore:              config.SchedCore,
+		monitor:                config.taskMonitor,
 	}
 
 	if err := m.loadExistingTasks(ctx); err != nil {
@@ -154,6 +162,7 @@ type ShimManager struct {
 	containers             containers.Store
 	// runtimePaths is a cache of `runtime names` -> `resolved fs path`
 	runtimePaths sync.Map
+	monitor      runtime.TaskMonitor
 }
 
 // ID of the shim manager
@@ -221,6 +230,11 @@ func (m *ShimManager) startShim(ctx context.Context, bundle *Bundle, id string, 
 	})
 	shim, err := b.Start(ctx, topts, func() {
 		log.G(ctx).WithField("id", id).Info("shim disconnected")
+		if task, getErr := m.shims.Get(ctx, id); getErr == nil {
+			if err := m.monitor.Stop(task); err != nil {
+				log.G(ctx).Errorf("Failed to remove task %q from monitor list", id)
+			}
+		}
 
 		cleanupAfterDeadShim(context.Background(), id, ns, m.shims, m.events, b)
 		// Remove self from the runtime task list. Even though the cleanupAfterDeadShim()
