@@ -82,12 +82,12 @@ func TestGetActivePath(t *testing.T) {
 		Name: "testname",
 	}
 	il.Labels = make(map[string]string)
-	if _, err := getActivePath(il); err == nil {
+	if _, err := getActivePath(il, ""); err == nil {
 		t.Error("should return error when no home in labels")
 	}
-	il.Labels["home"] = "/tmp"
-	if home, err := getActivePath(il); err == nil {
-		if home != "/tmp/.rwlayer/testname" {
+	il.Labels[activePath] = "/tmp"
+	if home, err := getActivePath(il, "testName"); err == nil {
+		if home != "/tmp/.rwlayer/testName" {
 			t.Error("home must be /tmp/.rwlayer/testname")
 		}
 	} else {
@@ -101,19 +101,19 @@ func TestUpperPath(t *testing.T) {
 	ss := &snapshotter{}
 	ss.root = "aaa"
 	id := "xxx"
-	path := ss.upperPath(nil, id)
+	path := ss.upperPath(nil, id, "testPath")
 	if path != filepath.Join(ss.root, "snapshots", id, "fs") {
 		t.Error("bad upper path")
 	}
-	path = ss.upperPath(il, id)
+	path = ss.upperPath(il, id, "testPath")
 	if path != filepath.Join(ss.root, "snapshots", id, "fs") {
 		t.Error("bad upper path")
 	}
 	home := "/tmp"
-	il.Labels["home"] = home
-	path = ss.upperPath(il, id)
-	if path != filepath.Join(home, id, "fs") {
-		t.Error("bad upper path")
+	il.Labels[activePath] = home
+	path = ss.upperPath(il, id, "testPath")
+	if path != filepath.Join(home, ".rwlayer", "testPath", id, "fs") {
+		t.Errorf("bad upper path")
 	}
 }
 
@@ -123,18 +123,18 @@ func TestWorkPath(t *testing.T) {
 	ss := &snapshotter{}
 	ss.root = "aaa"
 	id := "xxx"
-	path := ss.workPath(nil, id)
+	path := ss.workPath(nil, id, "testPath")
 	if path != filepath.Join(ss.root, "snapshots", id, "work") {
 		t.Error("bad work path")
 	}
-	path = ss.workPath(il, id)
+	path = ss.workPath(il, id, "testPath")
 	if path != filepath.Join(ss.root, "snapshots", id, "work") {
 		t.Error("bad work path")
 	}
 	home := "/tmp"
-	il.Labels["home"] = home
-	path = ss.workPath(il, id)
-	if path != filepath.Join(home, id, "work") {
+	il.Labels[activePath] = home
+	path = ss.workPath(il, id, "testPath")
+	if path != filepath.Join(home, ".rwlayer", "testPath", id, "work") {
 		t.Error("bad work path")
 	}
 }
