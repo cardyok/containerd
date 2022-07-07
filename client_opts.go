@@ -19,11 +19,12 @@ package containerd
 import (
 	"time"
 
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
 	"github.com/containerd/containerd/images"
 	"github.com/containerd/containerd/platforms"
 	"github.com/containerd/containerd/remotes"
 	"github.com/containerd/containerd/snapshots"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"google.golang.org/grpc"
 )
@@ -251,6 +252,14 @@ func WithMaxConcurrentUploadedLayers(max int) RemoteOpt {
 func WithAllMetadata() RemoteOpt {
 	return func(_ *Client, c *RemoteContext) error {
 		c.AllMetadata = true
+		return nil
+	}
+}
+
+// WithTTL specified ttl for the image
+func WithTTL(ttl time.Duration) RemoteOpt {
+	return func(_ *Client, c *RemoteContext) error {
+		c.TTL = ttl
 		return nil
 	}
 }

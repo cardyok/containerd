@@ -24,13 +24,14 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/urfave/cli"
+
 	"github.com/containerd/containerd/cmd/ctr/commands"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/images"
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/pkg/progress"
 	"github.com/containerd/containerd/platforms"
-	"github.com/urfave/cli"
 )
 
 // Command is the cli command for managing images
@@ -336,6 +337,17 @@ var removeCommand = cli.Command{
 			var opts []images.DeleteOpt
 			if context.Bool("sync") && i == context.NArg()-1 {
 				opts = append(opts, images.SynchronousDelete())
+			}
+			leaseService := client.LeasesService()
+			filter := fmt.Sprintf("id==%s", target)
+			lease, err := leaseService.List(ctx, filter)
+			if err != nil || len(lease) != 1 {
+				log.G(ctx).WithError(err).Errorf("ctr: Failed to get lease for img %q", target)
+			} else {
+				if err := leaseService.Delete(ctx, lease[0]); err != nil {
+					log.G(ctx).WithError(err).Errorf("Failed to delete lease for img %q", target)
+					continue
+				}
 			}
 			if err := imageStore.Delete(ctx, target, opts...); err != nil {
 				if !errdefs.IsNotFound(err) {

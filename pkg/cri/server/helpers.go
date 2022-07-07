@@ -24,6 +24,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/containerd/typeurl"
+	"github.com/sirupsen/logrus"
+
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/containers"
 	"github.com/containerd/containerd/errdefs"
@@ -37,8 +40,6 @@ import (
 	"github.com/containerd/containerd/reference/docker"
 	"github.com/containerd/containerd/runtime/linux/runctypes"
 	runcoptions "github.com/containerd/containerd/runtime/v2/runc/options"
-	"github.com/containerd/typeurl"
-	"github.com/sirupsen/logrus"
 
 	runhcsoptions "github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
 	imagedigest "github.com/opencontainers/go-digest"
@@ -81,6 +82,8 @@ const (
 	imageLabelKey = criContainerdPrefix + ".image"
 	// imageLabelValue is the label value indicating the image is managed by cri plugin.
 	imageLabelValue = "managed"
+	// imageTTL is how long this image will be preserved
+	imageTTL = criContainerdPrefix + ".imageTTL"
 	// sandboxMetadataExtension is an extension name that identify metadata of sandbox in CreateContainerRequest
 	sandboxMetadataExtension = criContainerdPrefix + ".sandbox.metadata"
 	// containerMetadataExtension is an extension name that identify metadata of container in CreateContainerRequest

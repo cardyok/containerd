@@ -483,6 +483,10 @@ func parseLeaseResource(r leases.Resource) ([]string, string, error) {
 			}
 			ref = dgst.String()
 		}
+	case string(bucketKeyObjectImages):
+		if len(keys) != 1 {
+			return nil, "", fmt.Errorf("invalid resource type %s: %w", typ, errdefs.ErrInvalidArgument)
+		}
 	case string(bucketKeyObjectSnapshots):
 		if len(keys) != 2 {
 			return nil, "", fmt.Errorf("invalid snapshot resource type %s: %w", typ, errdefs.ErrInvalidArgument)

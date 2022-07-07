@@ -21,7 +21,8 @@ import (
 	"fmt"
 
 	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/images"
+	"github.com/containerd/containerd/leases"
+	"github.com/containerd/containerd/log"
 
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
@@ -43,23 +44,24 @@ func (c *criService) RemoveImage(ctx context.Context, r *runtime.RemoveImageRequ
 	}
 
 	// Remove all image references.
-	for i, ref := range image.References {
-		var opts []images.DeleteOpt
-		if i == len(image.References)-1 {
-			// Delete the last image reference synchronously to trigger garbage collection.
-			// This is best effort. It is possible that the image reference is deleted by
-			// someone else before this point.
-			opts = []images.DeleteOpt{images.SynchronousDelete()}
-		}
-		err = c.client.ImageService().Delete(ctx, ref, opts...)
-		if err == nil || errdefs.IsNotFound(err) {
-			// Update image store to reflect the newest state in containerd.
-			if err := c.imageStore.Update(ctx, ref); err != nil {
-				return nil, fmt.Errorf("failed to update image reference %q for %q: %w", ref, image.ID, err)
+	for _, ref := range image.References {
+		var opts []leases.DeleteOpt
+		opts = []leases.DeleteOpt{leases.SynchronousDelete}
+		leaseService := c.client.LeasesService()
+		filter := fmt.Sprintf("id==%s", ref)
+		lease, err := leaseService.List(ctx, filter)
+		if err != nil || len(lease) != 1 {
+			log.G(ctx).WithError(err).Warnf("Failed to get lease for img %q", ref)
+		} else {
+			if err := leaseService.Delete(ctx, lease[0], opts...); err != nil {
+				return nil, fmt.Errorf("failed to delete lease for img %q: %w", ref, err)
 			}
-			continue
 		}
-		return nil, fmt.Errorf("failed to delete image reference %q for %q: %w", ref, image.ID, err)
+
+		// Update image store to reflect the newest state in containerd.
+		if err := c.imageStore.Update(ctx, ref); err != nil {
+			return nil, fmt.Errorf("failed to update image reference %q for %q: %w", ref, image.ID, err)
+		}
 	}
 	return &runtime.RemoveImageResponse{}, nil
 }

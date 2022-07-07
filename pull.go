@@ -20,16 +20,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
+
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/images"
+	"github.com/containerd/containerd/leases"
+	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/pkg/unpack"
 	"github.com/containerd/containerd/platforms"
 	"github.com/containerd/containerd/remotes"
 	"github.com/containerd/containerd/remotes/docker"
 	"github.com/containerd/containerd/remotes/docker/schema1" //nolint:staticcheck // Ignore SA1019. Need to keep deprecated package for compatibility.
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"golang.org/x/sync/semaphore"
 )
 
 // Pull downloads the provided content into containerd's content store
@@ -132,7 +136,7 @@ func (c *Client) Pull(ctx context.Context, ref string, opts ...RemoteOpt) (_ Ima
 		}
 	}
 
-	img, err = c.createNewImage(ctx, img)
+	img, err = c.createNewImage(ctx, img, pullCtx.TTL)
 	if err != nil {
 		return nil, err
 	}
@@ -253,8 +257,35 @@ func (c *Client) fetch(ctx context.Context, rCtx *RemoteContext, ref string, lim
 	}, nil
 }
 
-func (c *Client) createNewImage(ctx context.Context, img images.Image) (images.Image, error) {
+func (c *Client) createNewImage(ctx context.Context, img images.Image, ttl time.Duration) (images.Image, error) {
+	var leaseOpt []leases.Opt
 	is := c.ImageService()
+	ls := c.LeasesService()
+	leaseOpt = append(leaseOpt, leases.WithID(img.Name))
+	if ttl != 0 {
+		leaseOpt = append(leaseOpt, leases.WithExpiration(ttl))
+	}
+	lease, err := ls.Create(ctx, leaseOpt...)
+	if err == nil || errdefs.IsAlreadyExists(err) {
+		if err == nil {
+			filter := fmt.Sprintf("id==%s", img.Name)
+			filterLeases, err := ls.List(ctx, filter)
+			if err != nil || len(filterLeases) != 1 {
+				log.G(ctx).WithError(err).Errorf("Failed to get lease for img when createNewImage%q", img.Name)
+				return images.Image{}, err
+			}
+			lease = filterLeases[0]
+		}
+		err = ls.AddResource(ctx, lease, leases.Resource{
+			ID:   img.Name,
+			Type: "images",
+		})
+		if err != nil {
+			log.G(ctx).Infof("Failed to addResource when createNewImage: %v", err)
+		}
+	} else {
+		return images.Image{}, fmt.Errorf("failed to create lease for image %s: %w", img.Name, err)
+	}
 	for {
 		if created, err := is.Create(ctx, img); err != nil {
 			if !errdefs.IsAlreadyExists(err) {

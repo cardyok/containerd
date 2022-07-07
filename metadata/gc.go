@@ -24,9 +24,10 @@ import (
 	"strings"
 	"time"
 
+	bolt "go.etcd.io/bbolt"
+
 	"github.com/containerd/containerd/gc"
 	"github.com/containerd/containerd/log"
-	bolt "go.etcd.io/bbolt"
 )
 
 const (
@@ -46,11 +47,14 @@ const (
 	ResourceIngest
 	// resourceEnd is the end of specified resource types
 	resourceEnd
+	// ResourceImages specifies a image
+	ResourceImages
 )
 
 const (
 	resourceContentFlat  = ResourceContent | 0x20
 	resourceSnapshotFlat = ResourceSnapshot | 0x20
+	resourceImagesFlat   = ResourceImages | 0x20
 )
 
 var (
@@ -256,6 +260,7 @@ func (c *gcContext) scanRoots(ctx context.Context, tx *bolt.Tx, nc chan<- gc.Nod
 							log.G(ctx).WithError(err).WithField("lease", string(k)).Infof("ignoring invalid expiration value %q", string(expV))
 						} else if expThreshold.After(exp) {
 							// lease has expired, skip
+							log.G(ctx).WithError(err).WithField("lease", string(k)).Debugf("Lease has expired %q, removed", string(expV))
 							return nil
 						}
 					}
@@ -309,6 +314,21 @@ func (c *gcContext) scanRoots(ctx context.Context, tx *bolt.Tx, nc chan<- gc.Nod
 					}
 				}
 
+				itype := ResourceImages
+				if flat {
+					itype = resourceImagesFlat
+				}
+
+				imgbkt := libkt.Bucket(bucketKeyObjectImages)
+				if imgbkt != nil {
+					if err := imgbkt.ForEach(func(k, v []byte) error {
+						fn(gcnode(itype, ns, string(k)))
+						return nil
+					}); err != nil {
+						return err
+					}
+				}
+
 				ibkt := libkt.Bucket(bucketKeyObjectIngests)
 				if ibkt != nil {
 					if err := ibkt.ForEach(func(k, v []byte) error {
@@ -322,24 +342,6 @@ func (c *gcContext) scanRoots(ctx context.Context, tx *bolt.Tx, nc chan<- gc.Nod
 				c.leased(ns, string(k), fn)
 
 				return nil
-			}); err != nil {
-				return err
-			}
-		}
-
-		ibkt := nbkt.Bucket(bucketKeyObjectImages)
-		if ibkt != nil {
-			if err := ibkt.ForEach(func(k, v []byte) error {
-				if v != nil {
-					return nil
-				}
-
-				target := ibkt.Bucket(k).Bucket(bucketKeyTarget)
-				if target != nil {
-					contentKey := string(target.Get(bucketKeyDigest))
-					fn(gcnode(ResourceContent, ns, contentKey))
-				}
-				return c.sendLabelRefs(ns, ibkt.Bucket(k), fn)
 			}); err != nil {
 				return err
 			}
@@ -396,6 +398,11 @@ func (c *gcContext) scanRoots(ctx context.Context, tx *bolt.Tx, nc chan<- gc.Nod
 				if snapshotter != "" {
 					ss := string(cibkt.Get(bucketKeySnapshotKey))
 					fn(gcnode(ResourceSnapshot, ns, fmt.Sprintf("%s/%s", snapshotter, ss)))
+				}
+
+				imageName := cibkt.Get(bucketKeyImage)
+				if imageName != nil {
+					fn(gcnode(ResourceImages, ns, string(imageName)))
 				}
 
 				return c.sendLabelRefs(ns, cibkt, fn)
@@ -479,6 +486,19 @@ func (c *gcContext) references(ctx context.Context, tx *bolt.Tx, node gc.Node, f
 			fn(gcnode(ResourceContent, node.Namespace, string(expected)))
 		}
 		return nil
+
+	case ResourceImages:
+		bkt := getBucket(tx, bucketKeyVersion, []byte(node.Namespace), bucketKeyObjectImages, []byte(node.Key))
+		if bkt == nil {
+			// Node may be created from dead edge
+			return nil
+		}
+		target := bkt.Bucket(bucketKeyTarget)
+		if target != nil {
+			contentKey := string(target.Get(bucketKeyDigest))
+			fn(gcnode(ResourceContent, node.Namespace, contentKey))
+		}
+		return nil
 	}
 
 	return nil
@@ -508,6 +528,18 @@ func (c *gcContext) scanAll(ctx context.Context, tx *bolt.Tx, fn func(ctx contex
 					return nil
 				}
 				return fn(ctx, gcnode(ResourceLease, ns, string(k)))
+			}); err != nil {
+				return err
+			}
+		}
+
+		ibkt := nbkt.Bucket(bucketKeyObjectImages)
+		if ibkt != nil {
+			if err := ibkt.ForEach(func(k, v []byte) error {
+				if v != nil {
+					return nil
+				}
+				return fn(ctx, gcnode(ResourceImages, ns, string(k)))
 			}); err != nil {
 				return err
 			}
@@ -594,6 +626,11 @@ func (c *gcContext) remove(ctx context.Context, tx *bolt.Tx, node gc.Node) error
 		if cbkt != nil {
 			log.G(ctx).WithField("key", node.Key).Debug("remove content")
 			return cbkt.DeleteBucket([]byte(node.Key))
+		}
+	case ResourceImages:
+		ibkt := nsbkt.Bucket(bucketKeyObjectImages)
+		if ibkt != nil {
+			return ibkt.DeleteBucket([]byte(node.Key))
 		}
 	case ResourceSnapshot:
 		sbkt := nsbkt.Bucket(bucketKeyObjectSnapshots)

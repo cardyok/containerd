@@ -26,6 +26,10 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/opencontainers/go-digest"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/urfave/cli"
+
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/cmd/ctr/commands"
 	"github.com/containerd/containerd/content"
@@ -35,9 +39,6 @@ import (
 	"github.com/containerd/containerd/pkg/progress"
 	"github.com/containerd/containerd/platforms"
 	"github.com/containerd/containerd/remotes"
-	"github.com/opencontainers/go-digest"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/urfave/cli"
 )
 
 var fetchCommand = cli.Command{
@@ -113,6 +114,8 @@ type FetchConfig struct {
 	RemoteOpts []containerd.RemoteOpt
 	// TraceHTTP writes DNS and connection information to the log when dealing with a container registry
 	TraceHTTP bool
+	// TTL is how long this image will be preserved
+	TTL time.Duration
 }
 
 // NewFetchConfig returns the default FetchConfig from cli flags
@@ -153,6 +156,11 @@ func NewFetchConfig(ctx context.Context, clicontext *cli.Context) (*FetchConfig,
 	if clicontext.IsSet("max-concurrent-uploaded-layers") {
 		mcu := clicontext.Int("max-concurrent-uploaded-layers")
 		config.RemoteOpts = append(config.RemoteOpts, containerd.WithMaxConcurrentUploadedLayers(mcu))
+	}
+
+	if ttl := clicontext.Duration("ttl"); ttl != 0 {
+		log.G(ctx).Info("Pulling with ttl %v", ttl)
+		config.RemoteOpts = append(config.RemoteOpts, containerd.WithTTL(ttl))
 	}
 
 	return config, nil

@@ -42,6 +42,7 @@ import (
 	"github.com/containerd/containerd/errdefs"
 	containerdimages "github.com/containerd/containerd/images"
 	"github.com/containerd/containerd/labels"
+	"github.com/containerd/containerd/leases"
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/pkg/cri/annotations"
 	criconfig "github.com/containerd/containerd/pkg/cri/config"
@@ -159,6 +160,12 @@ func (c *criService) PullImage(ctx context.Context, r *runtime.PullImageRequest)
 			containerd.WithChildLabelMap(containerdimages.ChildGCLabelsFilterLayers))
 	}
 
+	if imageAnnotation := r.GetImage().GetAnnotations(); imageAnnotation != nil && imageAnnotation[imageTTL] != "" {
+		if duration, err := time.ParseDuration(imageAnnotation[imageTTL]); err == nil {
+			pullOpts = append(pullOpts, containerd.WithTTL(duration))
+		}
+	}
+
 	pullReporter.start(pctx)
 	image, err := c.client.Pull(pctx, ref, pullOpts...)
 	pcancel()
@@ -177,7 +184,7 @@ func (c *criService) PullImage(ctx context.Context, r *runtime.PullImageRequest)
 		if r == "" {
 			continue
 		}
-		if err := c.createImageReference(ctx, r, image.Target()); err != nil {
+		if err := c.createImageReference(ctx, r, image.Target(), image.Name()); err != nil {
 			return nil, fmt.Errorf("failed to create image reference %q: %w", r, err)
 		}
 		// Update image store to reflect the newest state in containerd.
@@ -242,7 +249,7 @@ func ParseAuth(auth *runtime.AuthConfig, host string) (string, string, error) {
 // Note that because create and update are not finished in one transaction, there could be race. E.g.
 // the image reference is deleted by someone else after create returns already exists, but before update
 // happens.
-func (c *criService) createImageReference(ctx context.Context, name string, desc imagespec.Descriptor) error {
+func (c *criService) createImageReference(ctx context.Context, name string, desc imagespec.Descriptor, imageName string) error {
 	img := containerdimages.Image{
 		Name:   name,
 		Target: desc,
@@ -251,6 +258,23 @@ func (c *criService) createImageReference(ctx context.Context, name string, desc
 	}
 	// TODO(random-liu): Figure out which is the more performant sequence create then update or
 	// update then create.
+	leaseService := c.client.LeasesService()
+	filter := fmt.Sprintf("id==%s", imageName)
+	filterLeases, err := leaseService.List(ctx, filter)
+	if err != nil || len(filterLeases) != 1 {
+		log.G(ctx).WithError(err).Errorf("Failed to get lease for img %q", imageName)
+		return err
+	}
+	lease := filterLeases[0]
+	err = leaseService.AddResource(ctx, lease, leases.Resource{
+		ID:   name,
+		Type: "images",
+	})
+	if err != nil {
+		log.G(ctx).Infof("Failed to createImageReferences: %v", err)
+		return err
+	}
+
 	oldImg, err := c.client.ImageService().Create(ctx, img)
 	if err == nil || !errdefs.IsAlreadyExists(err) {
 		return err
@@ -278,14 +302,14 @@ func (c *criService) updateImage(ctx context.Context, r string) error {
 			return fmt.Errorf("get image id: %w", err)
 		}
 		id := configDesc.Digest.String()
-		if err := c.createImageReference(ctx, id, img.Target()); err != nil {
+		if err := c.createImageReference(ctx, id, img.Target(), img.Name()); err != nil {
 			return fmt.Errorf("create image id reference %q: %w", id, err)
 		}
 		if err := c.imageStore.Update(ctx, id); err != nil {
 			return fmt.Errorf("update image store for %q: %w", id, err)
 		}
 		// The image id is ready, add the label to mark the image as managed.
-		if err := c.createImageReference(ctx, r, img.Target()); err != nil {
+		if err := c.createImageReference(ctx, r, img.Target(), img.Name()); err != nil {
 			return fmt.Errorf("create managed label: %w", err)
 		}
 	}

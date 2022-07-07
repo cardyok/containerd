@@ -24,15 +24,17 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/urfave/cli"
+
 	"github.com/containerd/containerd/cmd/ctr/commands"
 	"github.com/containerd/containerd/leases"
-	"github.com/urfave/cli"
 )
 
 // Command is the cli command for managing content
 var Command = cli.Command{
-	Name:  "leases",
-	Usage: "manage leases",
+	Name:    "leases",
+	Aliases: []string{"l"},
+	Usage:   "manage leases",
 	Subcommands: cli.Commands{
 		listCommand,
 		createCommand,
