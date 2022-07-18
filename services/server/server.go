@@ -40,7 +40,6 @@ import (
 	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/sirupsen/logrus"
 	bolt "go.etcd.io/bbolt"
-	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials"
@@ -135,12 +134,12 @@ func New(ctx context.Context, config *srvconfig.Config) (*Server, error) {
 
 	serverOpts := []grpc.ServerOption{
 		grpc.StreamInterceptor(grpc_middleware.ChainStreamServer(
-			otelgrpc.StreamServerInterceptor(),
+			//otelgrpc.StreamServerInterceptor(),
 			grpc.StreamServerInterceptor(grpc_prometheus.StreamServerInterceptor),
 			streamNamespaceInterceptor,
 		)),
 		grpc.UnaryInterceptor(grpc_middleware.ChainUnaryServer(
-			otelgrpc.UnaryServerInterceptor(),
+			//otelgrpc.UnaryServerInterceptor(),
 			grpc.UnaryServerInterceptor(grpc_prometheus.UnaryServerInterceptor),
 			unaryNamespaceInterceptor,
 			interceptor.FlyingRequestCountInterceptor(interceptor.FlyingReqCountDecider, &local.FlyingReqWg),
