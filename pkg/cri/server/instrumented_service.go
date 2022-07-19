@@ -17,13 +17,18 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
+	osruntime "runtime"
+	"strings"
 
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/log"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 	runtime_alpha "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
+
+	"github.com/containerd/containerd/errdefs"
+	"github.com/containerd/containerd/log"
 
 	ctrdutil "github.com/containerd/containerd/pkg/cri/util"
 )
@@ -72,6 +77,7 @@ func (in *instrumentedService) RunPodSandbox(ctx context.Context, r *runtime.Run
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.InfoLevel)
 	log.G(ctx).Infof("RunPodSandbox for %+v", r.GetConfig().GetMetadata())
 	defer func() {
 		if err != nil {
@@ -125,6 +131,7 @@ func (in *instrumentedService) ListPodSandbox(ctx context.Context, r *runtime.Li
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.DebugLevel)
 	log.G(ctx).Tracef("ListPodSandbox with filter %+v", r.GetFilter())
 	defer func() {
 		if err != nil {
@@ -178,6 +185,7 @@ func (in *instrumentedService) PodSandboxStatus(ctx context.Context, r *runtime.
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.DebugLevel)
 	log.G(ctx).Tracef("PodSandboxStatus for %q", r.GetPodSandboxId())
 	defer func() {
 		if err != nil {
@@ -231,6 +239,7 @@ func (in *instrumentedService) StopPodSandbox(ctx context.Context, r *runtime.St
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.InfoLevel)
 	log.G(ctx).Infof("StopPodSandbox for %q", r.GetPodSandboxId())
 	defer func() {
 		if err != nil {
@@ -284,6 +293,7 @@ func (in *instrumentedService) RemovePodSandbox(ctx context.Context, r *runtime.
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.InfoLevel)
 	log.G(ctx).Infof("RemovePodSandbox for %q", r.GetPodSandboxId())
 	defer func() {
 		if err != nil {
@@ -337,6 +347,7 @@ func (in *instrumentedService) PortForward(ctx context.Context, r *runtime.PortF
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.DebugLevel)
 	log.G(ctx).Infof("Portforward for %q port %v", r.GetPodSandboxId(), r.GetPort())
 	defer func() {
 		if err != nil {
@@ -390,6 +401,7 @@ func (in *instrumentedService) CreateContainer(ctx context.Context, r *runtime.C
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.InfoLevel)
 	log.G(ctx).Infof("CreateContainer within sandbox %q for container %+v",
 		r.GetPodSandboxId(), r.GetConfig().GetMetadata())
 	defer func() {
@@ -450,6 +462,7 @@ func (in *instrumentedService) StartContainer(ctx context.Context, r *runtime.St
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.InfoLevel)
 	log.G(ctx).Infof("StartContainer for %q", r.GetContainerId())
 	defer func() {
 		if err != nil {
@@ -503,6 +516,7 @@ func (in *instrumentedService) ListContainers(ctx context.Context, r *runtime.Li
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.DebugLevel)
 	log.G(ctx).Tracef("ListContainers with filter %+v", r.GetFilter())
 	defer func() {
 		if err != nil {
@@ -558,6 +572,7 @@ func (in *instrumentedService) ContainerStatus(ctx context.Context, r *runtime.C
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.DebugLevel)
 	log.G(ctx).Tracef("ContainerStatus for %q", r.GetContainerId())
 	defer func() {
 		if err != nil {
@@ -611,6 +626,7 @@ func (in *instrumentedService) StopContainer(ctx context.Context, r *runtime.Sto
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.InfoLevel)
 	log.G(ctx).Infof("StopContainer for %q with timeout %d (s)", r.GetContainerId(), r.GetTimeout())
 	defer func() {
 		if err != nil {
@@ -664,6 +680,7 @@ func (in *instrumentedService) RemoveContainer(ctx context.Context, r *runtime.R
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.InfoLevel)
 	log.G(ctx).Infof("RemoveContainer for %q", r.GetContainerId())
 	defer func() {
 		if err != nil {
@@ -717,6 +734,7 @@ func (in *instrumentedService) ExecSync(ctx context.Context, r *runtime.ExecSync
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.DebugLevel)
 	log.G(ctx).Debugf("ExecSync for %q with command %+v and timeout %d (s)", r.GetContainerId(), r.GetCmd(), r.GetTimeout())
 	defer func() {
 		if err != nil {
@@ -770,6 +788,7 @@ func (in *instrumentedService) Exec(ctx context.Context, r *runtime.ExecRequest)
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.DebugLevel)
 	log.G(ctx).Debugf("Exec for %q with command %+v, tty %v and stdin %v",
 		r.GetContainerId(), r.GetCmd(), r.GetTty(), r.GetStdin())
 	defer func() {
@@ -825,6 +844,7 @@ func (in *instrumentedService) Attach(ctx context.Context, r *runtime.AttachRequ
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.DebugLevel)
 	log.G(ctx).Debugf("Attach for %q with tty %v and stdin %v", r.GetContainerId(), r.GetTty(), r.GetStdin())
 	defer func() {
 		if err != nil {
@@ -878,7 +898,8 @@ func (in *instrumentedService) UpdateContainerResources(ctx context.Context, r *
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
-	log.G(ctx).Infof("UpdateContainerResources for %q with Linux: %+v / Windows: %+v", r.GetContainerId(), r.GetLinux(), r.GetWindows())
+	logRequest(ctx, r, logrus.InfoLevel)
+	log.G(ctx).Infof("UpdateContainerResources for %q with %+v", r.GetContainerId(), r.GetLinux())
 	defer func() {
 		if err != nil {
 			log.G(ctx).WithError(err).Errorf("UpdateContainerResources for %q failed", r.GetContainerId())
@@ -931,6 +952,7 @@ func (in *instrumentedService) PullImage(ctx context.Context, r *runtime.PullIma
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.InfoLevel)
 	log.G(ctx).Infof("PullImage %q", r.GetImage().GetImage())
 	defer func() {
 		if err != nil {
@@ -986,6 +1008,7 @@ func (in *instrumentedService) ListImages(ctx context.Context, r *runtime.ListIm
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.DebugLevel)
 	log.G(ctx).Tracef("ListImages with filter %+v", r.GetFilter())
 	defer func() {
 		if err != nil {
@@ -1041,6 +1064,7 @@ func (in *instrumentedService) ImageStatus(ctx context.Context, r *runtime.Image
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.DebugLevel)
 	log.G(ctx).Tracef("ImageStatus for %q", r.GetImage().GetImage())
 	defer func() {
 		if err != nil {
@@ -1096,6 +1120,7 @@ func (in *instrumentedService) RemoveImage(ctx context.Context, r *runtime.Remov
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.InfoLevel)
 	log.G(ctx).Infof("RemoveImage %q", r.GetImage().GetImage())
 	defer func() {
 		if err != nil {
@@ -1149,6 +1174,7 @@ func (in *instrumentedService) ImageFsInfo(ctx context.Context, r *runtime.Image
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.DebugLevel)
 	log.G(ctx).Debugf("ImageFsInfo")
 	defer func() {
 		if err != nil {
@@ -1255,6 +1281,7 @@ func (in *instrumentedService) ContainerStats(ctx context.Context, r *runtime.Co
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.DebugLevel)
 	log.G(ctx).Debugf("ContainerStats for %q", r.GetContainerId())
 	defer func() {
 		if err != nil {
@@ -1361,6 +1388,7 @@ func (in *instrumentedService) ListContainerStats(ctx context.Context, r *runtim
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.DebugLevel)
 	log.G(ctx).Tracef("ListContainerStats with filter %+v", r.GetFilter())
 	defer func() {
 		if err != nil {
@@ -1414,6 +1442,7 @@ func (in *instrumentedService) Status(ctx context.Context, r *runtime.StatusRequ
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.DebugLevel)
 	log.G(ctx).Tracef("Status")
 	defer func() {
 		if err != nil {
@@ -1467,6 +1496,7 @@ func (in *instrumentedService) Version(ctx context.Context, r *runtime.VersionRe
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.DebugLevel)
 	log.G(ctx).Tracef("Version with client side version %q", r.GetVersion())
 	defer func() {
 		if err != nil {
@@ -1499,6 +1529,7 @@ func (in *instrumentedService) UpdateRuntimeConfig(ctx context.Context, r *runti
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.InfoLevel)
 	log.G(ctx).Debugf("UpdateRuntimeConfig with config %+v", r.GetRuntimeConfig())
 	defer func() {
 		if err != nil {
@@ -1552,6 +1583,7 @@ func (in *instrumentedService) ReopenContainerLog(ctx context.Context, r *runtim
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.DebugLevel)
 	log.G(ctx).Debugf("ReopenContainerLog for %q", r.GetContainerId())
 	defer func() {
 		if err != nil {
@@ -1568,6 +1600,7 @@ func (in *instrumentedAlphaService) ReopenContainerLog(ctx context.Context, r *r
 	if err := in.checkInitialized(); err != nil {
 		return nil, err
 	}
+	logRequest(ctx, r, logrus.InfoLevel)
 	log.G(ctx).Debugf("ReopenContainerLog for %q", r.GetContainerId())
 	defer func() {
 		if err != nil {
@@ -1669,4 +1702,21 @@ func v1RespToAlphaResp(
 		return err
 	}
 	return nil
+}
+
+func logRequest(ctx context.Context, r interface{}, level logrus.Level) {
+	pc, _, _, _ := osruntime.Caller(1)
+
+	parts := strings.Split(osruntime.FuncForPC(pc).Name(), ".")
+	var funcName string
+	if len(parts) > 0 {
+		funcName = parts[len(parts)-1]
+	}
+
+	b, _ := json.Marshal(r)
+	if level > logrus.DebugLevel {
+		log.G(ctx).Infof("%s request %s", funcName, string(b))
+	} else {
+		log.G(ctx).Debugf("%s request %s", funcName, string(b))
+	}
 }

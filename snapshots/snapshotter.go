@@ -31,7 +31,7 @@ const (
 	UnpackKeyPrefix = "extract"
 	// UnpackKeyFormat is the format for the snapshotter keys used for extraction
 	UnpackKeyFormat       = UnpackKeyPrefix + "-%s %s"
-	inheritedLabelsPrefix = "containerd.io/snapshot/"
+	inheritedLabelsPrefix = "containerd.io/snapshot"
 	labelSnapshotRef      = "containerd.io/snapshot.ref"
 )
 

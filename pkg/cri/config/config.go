@@ -30,6 +30,11 @@ import (
 	"github.com/containerd/containerd/plugin"
 )
 
+type Snapshotter struct {
+	// DefaultActiveQuota set the default active quota.
+	DefaultActiveQuota string `toml:"default_active_quota" json:"defaultActiveQuota"`
+}
+
 // Runtime struct to contain the type(ID), engine, and root variables for a default runtime
 // and a runtime for untrusted worload.
 type Runtime struct {
@@ -93,6 +98,9 @@ type ContainerdConfig struct {
 	// Runtimes is a map from CRI RuntimeHandler strings, which specify types of runtime
 	// configurations, to the matching configurations.
 	Runtimes map[string]Runtime `toml:"runtimes" json:"runtimes"`
+	// Snapshotters is a map from CRI Snapshotter strings, which specify types of snapshotter
+	// configurations, to the matching configurations.
+	Snapshotters map[string]Snapshotter `toml:"snapshotters" json:"snapshotters"`
 	// NoPivot disables pivot-root (linux only), required when running a container in a RamDisk with runc
 	// This only works for runtime type "io.containerd.runtime.v1.linux".
 	NoPivot bool `toml:"no_pivot" json:"noPivot"`

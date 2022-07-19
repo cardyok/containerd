@@ -31,12 +31,15 @@ import (
 
 	"github.com/containerd/continuity/fs"
 	"github.com/sirupsen/logrus"
+	"k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/snapshots"
 	"github.com/containerd/containerd/snapshots/overlay/overlayutils"
+	"github.com/containerd/containerd/snapshots/overlay/quota"
+	quotatypes "github.com/containerd/containerd/snapshots/overlay/quota/types"
 	"github.com/containerd/containerd/snapshots/storage"
 )
 
@@ -55,10 +58,27 @@ const volatileOpt = "containerd.io/snapshot/overlay.volatile"
 // will be stored in the specified path.
 const activePath = "containerd.io/snapshot/overlay.active.path"
 
+// SnapshotterLabelOverlayActivePath is a key of an optional label to active snapshot.
+// If this label is specified, content of this active snapshot(and subsequent rootfs write)
+// will be stored in the specified path.
+const SnapshotterLabelOverlayActivePath = "containerd.io/snapshot.overlay.active-path"
+
+// SnapshotterLabelOverlayActiveQuota is a key of an optional label to active snapshot.
+// If this label is specified, content of this active snapshot(and subsequent rootfs write)
+// will be set file system size.
+const SnapshotterLabelOverlayActiveQuota = "containerd.io/snapshot.overlay.active-quota"
+
+// MaxActiveQuota is defined the max usage quota of active layer.
+const MaxActiveQuota = 64 * 1024 * 1024 * 1024 * 1024
+
+// MinActiveQuota is defined the min usage quota of active layer.
+const MinActiveQuota = 1024 * 1024 * 1024
+
 // SnapshotterConfig is used to configure the overlay snapshotter instance
 type SnapshotterConfig struct {
 	asyncRemove   bool
 	upperdirLabel bool
+	quotaDriver   string
 }
 
 // Opt is an option to configure the overlay snapshotter
@@ -89,6 +109,14 @@ type snapshotter struct {
 	upperdirLabel bool
 	indexOff      bool
 	userxattr     bool // whether to enable "userxattr" mount option
+	quotaDriver   quotatypes.Quota
+}
+
+func WithQuotaDriver(driver string) Opt {
+	return func(config *SnapshotterConfig) error {
+		config.quotaDriver = driver
+		return nil
+	}
 }
 
 // NewSnapshotter returns a Snapshotter which uses overlayfs. The overlayfs
@@ -126,6 +154,9 @@ func NewSnapshotter(root string, opts ...Opt) (snapshots.Snapshotter, error) {
 		logrus.WithError(err).Warnf("cannot detect whether \"userxattr\" option needs to be used, assuming to be %v", userxattr)
 	}
 
+	// init upper layer quota driver
+	quotaDriver := quota.New(config.quotaDriver, nil)
+
 	return &snapshotter{
 		root:          root,
 		ms:            ms,
@@ -133,6 +164,7 @@ func NewSnapshotter(root string, opts ...Opt) (snapshots.Snapshotter, error) {
 		upperdirLabel: config.upperdirLabel,
 		indexOff:      supportsIndex(),
 		userxattr:     userxattr,
+		quotaDriver:   quotaDriver,
 	}, nil
 }
 
@@ -307,7 +339,7 @@ func (o *snapshotter) Remove(ctx context.Context, key string) (err error) {
 		}
 	}()
 
-	_, info, _, err := storage.GetInfo(ctx, key)
+	id, info, _, err := storage.GetInfo(ctx, key)
 	if err != nil {
 		if strings.Contains(err.Error(), "snapshot does not exist") {
 			if rerr := t.Rollback(); rerr != nil {
@@ -316,6 +348,18 @@ func (o *snapshotter) Remove(ctx context.Context, key string) (err error) {
 			return nil
 		}
 		return fmt.Errorf("failed to get snapshot info: %w", err)
+	}
+
+	upperPath := o.upperPath(&info, id, key)
+	activeQuota, err := o.getActiveQuota(&info)
+	if err != nil && !errdefs.IsNotFound(err) {
+		log.G(ctx).WithError(err).Warn("activeQuota specified invalid")
+	}
+	if o.quotaDriver != nil && activeQuota > 0 {
+		err := o.quotaDriver.Remove(ctx, filepath.Dir(upperPath))
+		if err != nil {
+			log.G(ctx).WithError(err).Warn("failed to remove active quota")
+		}
 	}
 
 	var home string
@@ -483,6 +527,27 @@ func removeActivePath(info *snapshots.Info, key string) error {
 	return nil
 }
 
+// getActiveQuota get the usage quota of active layer.
+func (o *snapshotter) getActiveQuota(info *snapshots.Info) (int, error) {
+	if info.Labels == nil {
+		return -1, fmt.Errorf("snapshot label is nil: %w", errdefs.ErrNotFound)
+	}
+
+	quota, ok := info.Labels[SnapshotterLabelOverlayActiveQuota]
+	if !ok {
+		return -1, fmt.Errorf("active snapshot quota is not specified: %w", errdefs.ErrNotFound)
+	}
+
+	parse := resource.MustParse(quota)
+	s := int(parse.Value())
+
+	if s < MinActiveQuota || s > MaxActiveQuota {
+		return -1, fmt.Errorf("active snapshot quota is invalid[%d, %d]: %d", MinActiveQuota, MaxActiveQuota, s)
+	}
+
+	return s, nil
+}
+
 func (o *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, key, parent string, opts []snapshots.Opt) (_ []mount.Mount, err error) {
 	ctx, t, err := o.ms.TransactionContext(ctx, true)
 	if err != nil {
@@ -538,7 +603,12 @@ func (o *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 		snapshotDir = filepath.Join(o.root, "snapshots")
 	}
 
-	td, err = o.prepareDirectory(ctx, snapshotDir, kind)
+	activeQuota, err := o.getActiveQuota(&base)
+	if err != nil && !errdefs.IsNotFound(err) {
+		log.G(ctx).WithError(err).WithField("snapshotter", base.Name).Warn("activeQuota specified invalid")
+	}
+
+	td, err = o.prepareDirectory(ctx, &base, snapshotDir, kind)
 	if err != nil {
 		if rerr := t.Rollback(); rerr != nil {
 			log.G(ctx).WithError(rerr).Warn("failed to rollback transaction")
@@ -575,10 +645,27 @@ func (o *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 		}
 	}
 
+	if o.quotaDriver != nil && activeQuota > 0 {
+		err = o.quotaDriver.Remove(ctx, td)
+		if err != nil {
+			log.G(ctx).WithError(err).WithField("snapshotter", base.Name).Warn("failed to remove active quota")
+		}
+	}
 	path = filepath.Join(snapshotDir, s.ID)
 	if err = os.Rename(td, path); err != nil {
 		return nil, fmt.Errorf("failed to rename: %w", err)
 	}
+	if o.quotaDriver != nil && activeQuota > 0 {
+		opts := map[string]string{
+			"base":   path,
+			"rwFlag": "rw",
+		}
+		err = o.quotaDriver.Setup(ctx, path, activeQuota, opts)
+		if err != nil {
+			log.G(ctx).WithError(err).WithField("snapshotter", base.Name).Warn("failed to setup active quota")
+		}
+	}
+
 	td = ""
 
 	rollback = false
@@ -589,7 +676,7 @@ func (o *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 	return o.mounts(&base, s, key), nil
 }
 
-func (o *snapshotter) prepareDirectory(ctx context.Context, snapshotDir string, kind snapshots.Kind) (string, error) {
+func (o *snapshotter) prepareDirectory(ctx context.Context, info *snapshots.Info, snapshotDir string, kind snapshots.Kind) (string, error) {
 	td, err := os.MkdirTemp(snapshotDir, "new-")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp dir: %w", err)
@@ -602,6 +689,33 @@ func (o *snapshotter) prepareDirectory(ctx context.Context, snapshotDir string, 
 	if kind == snapshots.KindActive {
 		if err := os.Mkdir(filepath.Join(td, "work"), 0711); err != nil {
 			return td, err
+		}
+	}
+
+	// setup active quota.
+	activeQuota, err := o.getActiveQuota(info)
+	if err != nil && !errdefs.IsNotFound(err) {
+		log.G(ctx).WithError(err).Warn("activeQuota specified invalid")
+	}
+	if o.quotaDriver != nil && activeQuota > 0 {
+		opts := map[string]string{
+			"base":   td,
+			"rwFlag": "rw",
+		}
+		err := o.quotaDriver.Setup(ctx, td, activeQuota, opts)
+		if err != nil {
+			log.G(ctx).WithError(err).Warn("failed to prepare quota size")
+		}
+
+		// set active quota will overwrite snapshotter directory.
+		if err := os.Mkdir(filepath.Join(td, "fs"), 0755); err != nil {
+			return td, err
+		}
+
+		if kind == snapshots.KindActive {
+			if err := os.Mkdir(filepath.Join(td, "work"), 0711); err != nil {
+				return td, err
+			}
 		}
 	}
 

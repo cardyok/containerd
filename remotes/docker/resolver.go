@@ -582,6 +582,7 @@ func (r *request) do(ctx context.Context) (*http.Response, error) {
 	}
 	if client.CheckRedirect == nil {
 		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			log.G(ctx).Debugf("do request Redirect: %v", req)
 			if len(via) >= 10 {
 				return errors.New("stopped after 10 redirects")
 			}

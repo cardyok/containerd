@@ -110,6 +110,7 @@ func WithVolumes(volumeMounts map[string]string, overrideMountInfo bool) contain
 		} else {
 			mountPaths = append(mountPaths, root)
 			if err := mount.All(mounts, root); err != nil {
+				log.G(ctx).Errorf("snapshotter %s trying to mount %+v, err: %+v", c.Snapshotter, mounts, err)
 				return fmt.Errorf("failed to mount: %w", err)
 			}
 			defer unmounter(root)

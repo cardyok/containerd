@@ -241,6 +241,11 @@ github.com/golang/protobuf/ptypes/any
 github.com/golang/protobuf/ptypes/duration
 github.com/golang/protobuf/ptypes/timestamp
 github.com/golang/protobuf/ptypes/wrappers
+# github.com/google/fscrypt v0.3.4
+## explicit; go 1.16
+github.com/google/fscrypt/filesystem
+github.com/google/fscrypt/metadata
+github.com/google/fscrypt/util
 # github.com/google/go-cmp v0.5.9
 ## explicit; go 1.13
 github.com/google/go-cmp/cmp
@@ -396,7 +401,7 @@ github.com/stretchr/testify/require
 # github.com/tchap/go-patricia v2.2.6+incompatible
 ## explicit
 github.com/tchap/go-patricia/patricia
-# github.com/urfave/cli v1.22.2 => github.com/urfave/cli v1.22.1
+# github.com/urfave/cli v1.22.5 => github.com/urfave/cli v1.22.1
 ## explicit; go 1.11
 github.com/urfave/cli
 # github.com/vishvananda/netlink v1.1.1-0.20210330154013-f5de75959ad5
@@ -460,7 +465,7 @@ go.opentelemetry.io/proto/otlp/collector/trace/v1
 go.opentelemetry.io/proto/otlp/common/v1
 go.opentelemetry.io/proto/otlp/resource/v1
 go.opentelemetry.io/proto/otlp/trace/v1
-# golang.org/x/crypto v0.0.0-20220315160706-3147a52a75dd
+# golang.org/x/crypto v0.0.0-20220408190544-5352b0902921
 ## explicit; go 1.17
 golang.org/x/crypto/cast5
 golang.org/x/crypto/ed25519

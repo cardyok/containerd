@@ -31,6 +31,7 @@ import (
 	v1 "github.com/containerd/nri/types/v1"
 	"github.com/containerd/typeurl"
 	"github.com/davecgh/go-spew/spew"
+	selinux "github.com/opencontainers/selinux/go-selinux"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
@@ -41,8 +42,6 @@ import (
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/snapshots"
 
-	selinux "github.com/opencontainers/selinux/go-selinux"
-
 	"github.com/containerd/containerd/pkg/cri/annotations"
 	criconfig "github.com/containerd/containerd/pkg/cri/config"
 	customopts "github.com/containerd/containerd/pkg/cri/opts"
@@ -51,6 +50,8 @@ import (
 	"github.com/containerd/containerd/pkg/cri/util"
 	ctrdutil "github.com/containerd/containerd/pkg/cri/util"
 	"github.com/containerd/containerd/pkg/netns"
+	"github.com/containerd/containerd/plugin"
+	"github.com/containerd/containerd/snapshots/overlay"
 )
 
 func init() {
@@ -162,12 +163,30 @@ func (c *criService) RunPodSandbox(ctx context.Context, r *runtime.RunPodSandbox
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate runtime options: %w", err)
 	}
-	snapshotterOpt := snapshots.WithLabels(snapshots.FilterInheritedLabels(config.Annotations))
+
 	snapshotter, err := c.getSandboxSnapshotter(ctx, config, ociRuntime)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find snapshotter for sandbox: %w", err)
 	}
 	sandbox.Snapshotter = snapshotter
+	snapshotterConfig, err := c.getSnapshotterConfig(snapshotter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sandbox snapshotter config: %w", err)
+	}
+
+	labels := snapshots.FilterInheritedLabels(config.Annotations)
+	// set default active quota
+	if config.Annotations[overlay.SnapshotterLabelOverlayActiveQuota] == "" &&
+		ociRuntime.Type == plugin.RuntimeRundV2 &&
+		snapshotterConfig.DefaultActiveQuota != "" {
+		labels[overlay.SnapshotterLabelOverlayActiveQuota] = snapshotterConfig.DefaultActiveQuota
+	}
+	snapshotterOpt := snapshots.WithLabels(labels)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate sanbdox container spec options: %w", err)
+	}
+
 	opts := []containerd.NewContainerOpts{
 		containerd.WithSnapshotter(snapshotter),
 		customopts.WithNewSnapshot(id, containerdImage, snapshotterOpt),
@@ -690,6 +709,15 @@ func (c *criService) getSandboxRuntime(config *runtime.PodSandboxConfig, runtime
 		return criconfig.Runtime{}, fmt.Errorf("no runtime for %q is configured", runtimeHandler)
 	}
 	return handler, nil
+}
+
+// getSnapshotterConfig returns the snapshotter configuration for sandbox.
+func (c *criService) getSnapshotterConfig(snapshotter string) (criconfig.Snapshotter, error) {
+	snapshotterConfig, ok := c.config.ContainerdConfig.Snapshotters[snapshotter]
+	if !ok {
+		return criconfig.Snapshotter{}, nil
+	}
+	return snapshotterConfig, nil
 }
 
 // getSandboxSnapshotter calculates appropriate snapshotter for the sandbox and containers in the sandbox

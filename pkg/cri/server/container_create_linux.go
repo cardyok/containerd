@@ -26,14 +26,17 @@ import (
 	"strings"
 
 	"github.com/containerd/cgroups"
-	"github.com/containerd/containerd/contrib/apparmor"
-	"github.com/containerd/containerd/contrib/seccomp"
-	"github.com/containerd/containerd/oci"
 	imagespec "github.com/opencontainers/image-spec/specs-go/v1"
 	runtimespec "github.com/opencontainers/runtime-spec/specs-go"
 	selinux "github.com/opencontainers/selinux/go-selinux"
 	"github.com/opencontainers/selinux/go-selinux/label"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
+
+	"github.com/containerd/containerd/contrib/apparmor"
+	"github.com/containerd/containerd/contrib/seccomp"
+	"github.com/containerd/containerd/oci"
+
+	"github.com/containerd/containerd/snapshots/overlay"
 
 	"github.com/containerd/containerd/pkg/cri/annotations"
 	"github.com/containerd/containerd/pkg/cri/config"
@@ -270,8 +273,12 @@ func (c *criService) containerSpec(
 		specOpts = append(specOpts, oci.WithRdt(rdtClass, "", ""))
 	}
 
+	_, activeQuotaSpecified := config.Annotations[overlay.SnapshotterLabelOverlayActiveQuota]
 	for pKey, pValue := range getPassthroughAnnotations(sandboxConfig.Annotations,
 		ociRuntime.PodAnnotations) {
+		if pKey == annotations.RundStorageIsolation && !activeQuotaSpecified {
+			continue
+		}
 		specOpts = append(specOpts, customopts.WithAnnotation(pKey, pValue))
 	}
 

@@ -24,13 +24,14 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/urfave/cli"
+
 	"github.com/containerd/containerd/cmd/ctr/commands"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/images"
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/pkg/progress"
 	"github.com/containerd/containerd/platforms"
-	"github.com/urfave/cli"
 )
 
 // Command is the cli command for managing images
@@ -38,6 +39,7 @@ var Command = cli.Command{
 	Name:    "images",
 	Aliases: []string{"image", "i"},
 	Usage:   "manage images",
+	Flags:   commands.SnapshotterFlags,
 	Subcommands: cli.Commands{
 		checkCommand,
 		exportCommand,

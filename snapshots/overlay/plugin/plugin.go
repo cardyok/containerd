@@ -33,6 +33,7 @@ type Config struct {
 	RootPath      string `toml:"root_path"`
 	UpperdirLabel bool   `toml:"upperdir_label"`
 	AsyncRemove   bool   `toml:"asyncRemove"`
+	QuotaDriver   string `toml:"quota_driver"`
 }
 
 func init() {
@@ -62,6 +63,9 @@ func init() {
 
 			if config.AsyncRemove {
 				oOpts = append(oOpts, overlay.AsynchronousRemove)
+			}
+			if config.QuotaDriver != "" {
+				oOpts = append(oOpts, overlay.WithQuotaDriver(config.QuotaDriver))
 			}
 			return overlay.NewSnapshotter(root, oOpts...)
 		},

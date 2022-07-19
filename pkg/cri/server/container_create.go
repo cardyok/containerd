@@ -41,7 +41,9 @@ import (
 	containerstore "github.com/containerd/containerd/pkg/cri/store/container"
 	"github.com/containerd/containerd/pkg/cri/util"
 	ctrdutil "github.com/containerd/containerd/pkg/cri/util"
+	"github.com/containerd/containerd/plugin"
 	"github.com/containerd/containerd/snapshots"
+	"github.com/containerd/containerd/snapshots/overlay"
 )
 
 func init() {
@@ -190,8 +192,8 @@ func (c *criService) CreateContainer(ctx context.Context, r *runtime.CreateConta
 	log.G(ctx).Infof("Container %q spec: %#+v", id, spew.NewFormatter(spec))
 
 	var snapshotterOpts []snapshots.Opt
+	snapshotterOpts = append(snapshotterOpts, snapshots.WithLabels(c.podFilterInheritedLabels(sandboxConfig.Annotations)))
 	snapshotterOpts = append(snapshotterOpts, snapshots.WithLabels(snapshots.FilterInheritedLabels(config.Annotations)))
-	snapshotterOpts = append(snapshotterOpts, snapshots.WithLabels(snapshots.FilterInheritedLabels(sandboxConfig.Annotations)))
 
 	// TODO(Chaofeng): Very hack move, should be reverted in the future and ask pod to use pod annotation instead
 	if sandboxConfig != nil && sandboxConfig.Metadata != nil {
@@ -208,6 +210,19 @@ func (c *criService) CreateContainer(ctx context.Context, r *runtime.CreateConta
 	if err != nil {
 		return nil, fmt.Errorf("failed to create container since no snapshotter specified anywhere: %w", err)
 	}
+	snapshotterConfig, err := c.getSnapshotterConfig(snapshotter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sandbox snapshotter config: %w", err)
+	}
+
+	// set default active quota
+	if config.Annotations[overlay.SnapshotterLabelOverlayActiveQuota] == "" &&
+		ociRuntime.Type == plugin.RuntimeRundV2 &&
+		snapshotterConfig.DefaultActiveQuota != "" {
+		snapshotterOpts = append(snapshotterOpts,
+			snapshots.WithLabels(map[string]string{overlay.SnapshotterLabelOverlayActiveQuota: snapshotterConfig.DefaultActiveQuota}))
+	}
+
 	// Set snapshotter before any other options.
 	opts := []containerd.NewContainerOpts{
 		containerd.WithSnapshotter(snapshotter),
@@ -376,4 +391,12 @@ func (c *criService) runtimeSpec(id string, baseSpecFile string, opts ...oci.Spe
 	}
 
 	return spec, nil
+}
+
+func (c *criService) podFilterInheritedLabels(labels map[string]string) map[string]string {
+	podLabels := snapshots.FilterInheritedLabels(labels)
+	if _, ok := podLabels[overlay.SnapshotterLabelOverlayActiveQuota]; ok {
+		delete(podLabels, overlay.SnapshotterLabelOverlayActiveQuota)
+	}
+	return podLabels
 }
