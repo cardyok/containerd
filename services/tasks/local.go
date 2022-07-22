@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	api "github.com/containerd/containerd/api/services/tasks/v1"
@@ -59,7 +60,8 @@ var (
 )
 
 const (
-	stateTimeout = "io.containerd.timeout.task.state"
+	stateTimeout   = "io.containerd.timeout.task.state"
+	metricsTimeout = "io.containerd.timeout.task.metrics"
 )
 
 // Config for the tasks service plugin
@@ -78,6 +80,7 @@ func init() {
 	})
 
 	timeout.Set(stateTimeout, 2*time.Second)
+	timeout.Set(metricsTimeout, 5*time.Second)
 }
 
 func initFunc(ic *plugin.InitContext) (interface{}, error) {
@@ -641,8 +644,14 @@ func (l *local) Wait(ctx context.Context, r *api.WaitRequest, _ ...grpc.CallOpti
 	}, nil
 }
 
+// getTasksMetrics try to get metrics concurrent. TODO(YiZheng) Already request an issue: https://github.com/containerd/containerd/issues/7202
 func getTasksMetrics(ctx context.Context, filter filters.Filter, tasks []runtime.Task, r *api.MetricsResponse) {
-	for _, tk := range tasks {
+	wg := sync.WaitGroup{}
+	lock := sync.Mutex{}
+	ctx, cancel := timeout.WithContext(ctx, metricsTimeout)
+	defer cancel()
+	getMetrics := func(tk runtime.Task) {
+		defer wg.Done()
 		if !filter.Match(filters.AdapterFunc(func(fieldpath []string) (string, bool) {
 			t := tk
 			switch fieldpath[0] {
@@ -655,22 +664,30 @@ func getTasksMetrics(ctx context.Context, filter filters.Filter, tasks []runtime
 			}
 			return "", false
 		})) {
-			continue
+			return
 		}
 		collected := time.Now()
 		stats, err := tk.Stats(ctx)
+
 		if err != nil {
 			if !errdefs.IsNotFound(err) {
 				log.G(ctx).WithError(err).Errorf("collecting metrics for %s", tk.ID())
 			}
-			continue
+			return
 		}
+		lock.Lock()
 		r.Metrics = append(r.Metrics, &types.Metric{
 			Timestamp: collected,
 			ID:        tk.ID(),
 			Data:      stats,
 		})
+		lock.Unlock()
 	}
+	wg.Add(len(tasks))
+	for _, tk := range tasks {
+		go getMetrics(tk)
+	}
+	wg.Wait()
 }
 
 func (l *local) writeContent(ctx context.Context, mediaType, ref string, r io.Reader) (*types.Descriptor, error) {
