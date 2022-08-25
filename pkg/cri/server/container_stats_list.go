@@ -24,6 +24,7 @@ import (
 	"golang.org/x/net/context"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 
+	"github.com/containerd/containerd/log"
 	containerstore "github.com/containerd/containerd/pkg/cri/store/container"
 )
 
@@ -40,7 +41,7 @@ func (c *criService) ListContainerStats(
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch metrics for tasks: %w", err)
 	}
-	criStats, err := c.toCRIContainerStats(resp.Metrics, containers)
+	criStats, err := c.toCRIContainerStats(ctx, resp.Metrics, containers)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert to cri containerd stats format: %w", err)
 	}
@@ -48,6 +49,7 @@ func (c *criService) ListContainerStats(
 }
 
 func (c *criService) toCRIContainerStats(
+	ctx context.Context,
 	stats []*types.Metric,
 	containers []containerstore.Container,
 ) (*runtime.ListContainerStatsResponse, error) {
@@ -59,7 +61,8 @@ func (c *criService) toCRIContainerStats(
 	for _, cntr := range containers {
 		cs, err := c.containerMetrics(cntr.Metadata, statsMap[cntr.ID])
 		if err != nil {
-			return nil, fmt.Errorf("failed to decode container metrics for %q: %w", cntr.ID, err)
+			log.G(ctx).Warnf("failed to decode container metrics for %q: %v", cntr.ID, err)
+			continue
 		}
 		containerStats.Stats = append(containerStats.Stats, cs)
 	}
