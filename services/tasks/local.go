@@ -62,6 +62,7 @@ var (
 const (
 	stateTimeout   = "io.containerd.timeout.task.state"
 	metricsTimeout = "io.containerd.timeout.task.metrics"
+	updateTimeout  = "io.containerd.timeout.task.update"
 )
 
 // Config for the tasks service plugin
@@ -81,6 +82,7 @@ func init() {
 
 	timeout.Set(stateTimeout, 2*time.Second)
 	timeout.Set(metricsTimeout, 5*time.Second)
+	timeout.Set(updateTimeout, 40*time.Second)
 }
 
 func initFunc(ic *plugin.InitContext) (interface{}, error) {
@@ -597,6 +599,8 @@ func (l *local) Checkpoint(ctx context.Context, r *api.CheckpointTaskRequest, _ 
 }
 
 func (l *local) Update(ctx context.Context, r *api.UpdateTaskRequest, _ ...grpc.CallOption) (*ptypes.Empty, error) {
+	ctx, cancel := timeout.WithContext(ctx, updateTimeout)
+	defer cancel()
 	t, err := l.getTask(ctx, r.ContainerID)
 	if err != nil {
 		return nil, err
