@@ -87,7 +87,7 @@ func withCheckpointOpts(rt string, context *cli.Context) containerd.CheckpointTa
 		workPath := context.String("work-path")
 
 		switch rt {
-		case plugin.RuntimeRuncV1, plugin.RuntimeRuncV2:
+		case plugin.RuntimeRuncV1, plugin.RuntimeRuncV2, plugin.RuntimeRundV2:
 			if r.Options == nil {
 				r.Options = &options.CheckpointOptions{}
 			}

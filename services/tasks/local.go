@@ -769,7 +769,7 @@ func getCheckpointPath(runtime string, option *ptypes.Any) (string, error) {
 
 	var checkpointPath string
 	switch {
-	case checkRuntime(runtime, "io.containerd.runc"):
+	case checkRuntime(runtime, "io.containerd.runc"), checkRuntime(runtime, "io.containerd.rund.v2"):
 		v, err := typeurl.UnmarshalAny(option)
 		if err != nil {
 			return "", err
@@ -803,7 +803,7 @@ func getRestorePath(runtime string, option *ptypes.Any) (string, error) {
 
 	var restorePath string
 	switch {
-	case checkRuntime(runtime, "io.containerd.runc"):
+	case checkRuntime(runtime, "io.containerd.runc"), checkRuntime(runtime, "io.containerd.rund.v2"):
 		v, err := typeurl.UnmarshalAny(option)
 		if err != nil {
 			return "", err
