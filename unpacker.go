@@ -27,6 +27,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/opencontainers/go-digest"
+	"github.com/opencontainers/image-spec/identity"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/sirupsen/logrus"
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
+
 	"github.com/containerd/containerd/content"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/images"
@@ -35,12 +42,6 @@ import (
 	"github.com/containerd/containerd/pkg/kmutex"
 	"github.com/containerd/containerd/platforms"
 	"github.com/containerd/containerd/snapshots"
-	"github.com/opencontainers/go-digest"
-	"github.com/opencontainers/image-spec/identity"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/sirupsen/logrus"
-	"golang.org/x/sync/errgroup"
-	"golang.org/x/sync/semaphore"
 )
 
 const (
@@ -302,7 +303,7 @@ func (u *unpacker) fetch(ctx context.Context, h images.Handler, layers []ocispec
 			u.release()
 
 			if err != nil && !errors.Is(err, images.ErrSkipDesc) {
-				return err
+				return fmt.Errorf("failed to handle %v %v: %w", desc.Digest.String(), desc.Size, err)
 			}
 			close(done[i])
 
