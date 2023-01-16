@@ -126,6 +126,9 @@ type criService struct {
 	// cniNetConfMonitor is used to reload cni network conf if there is
 	// any valid fs change events from cni network conf dir.
 	cniNetConfMonitor map[string]*cniNetConfSyncer
+	// criConfMonitor is used to reload cri conf if there is
+	// any valid fs change events from cri config dir.
+	criConfMonitor *criConfSyncer
 	// baseOCISpecs contains cached OCI specs loaded via `Runtime.BaseRuntimeSpec`
 	baseOCISpecs map[string]*oci.Spec
 	// allCaps is the list of the capabilities.
@@ -211,6 +214,10 @@ func NewCRIService(config criconfig.Config, client *containerd.Client) (CRIServi
 			c.cniNetConfMonitor[name] = m
 		}
 	}
+	c.criConfMonitor, err = c.newCRIConfSyncer(c.config.DynamicCRIConfPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cni conf monitor: %w", err)
+	}
 
 	// Preload base OCI specs
 	c.baseOCISpecs, err = loadBaseOCISpecs(&config)
@@ -278,6 +285,12 @@ func (c *criService) Run(ready func()) error {
 	go func() {
 		netSyncGroup.Wait()
 		close(cniNetConfMonitorErrCh)
+	}()
+
+	go func() {
+		if err := c.confSyncLoop(); err != nil {
+			logrus.Errorf("cri conf syncer error: %v", err)
+		}
 	}()
 
 	// Start Image GC
@@ -390,6 +403,11 @@ func (c *criService) Close() error {
 	for name, h := range c.cniNetConfMonitor {
 		if err := h.stop(); err != nil {
 			logrus.WithError(err).Errorf("failed to stop cni network conf monitor for %s", name)
+		}
+	}
+	if c.criConfMonitor != nil {
+		if err := c.criConfMonitor.stop(); err != nil {
+			logrus.WithError(err).Error("failed to stop cri conf monitor")
 		}
 	}
 	c.eventMonitor.stop()

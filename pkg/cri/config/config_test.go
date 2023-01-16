@@ -21,9 +21,90 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/containerd/containerd/plugin"
+	"github.com/pelletier/go-toml"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/containerd/containerd/plugin"
 )
+
+type TestStruct struct {
+	IntField1   int      `toml:"int1"`
+	IntField2   int      `toml:"int2"`
+	IntField3   int      `toml:"int3"`
+	IntField4   int      `toml:"int4"`
+	IntField5   int      `toml:"int5"`
+	BoolField1  bool     `toml:"bool1"`
+	BoolField2  bool     `toml:"bool2"`
+	BoolField3  bool     `toml:"bool3"`
+	StrField1   string   `toml:"str1"`
+	StrField2   string   `toml:"str2"`
+	StrField3   string   `toml:"str3"`
+	SliceField1 []string `toml:"slice1"`
+	SliceField2 []string `toml:"slice2"`
+	SliceField3 []string `toml:"slice3"`
+	SliceField4 []string `toml:"slice4"`
+	SliceField5 []string `toml:"slice5"`
+}
+
+func TestMergeConfig2(t *testing.T) {
+	for desc, test := range map[string]struct {
+		to             *TestStruct
+		from           string
+		expectedResult *TestStruct
+	}{
+		"no map no slice": {
+			to: &TestStruct{
+				IntField3:   2,
+				IntField5:   2,
+				BoolField1:  false,
+				BoolField2:  true,
+				BoolField3:  true,
+				StrField1:   "",
+				StrField2:   "a",
+				StrField3:   "a",
+				SliceField2: []string{"a"},
+				SliceField3: []string{"a"},
+				SliceField4: []string{"a"},
+			},
+			from: `
+int1=0
+int4=2
+int5=0
+bool1=true
+bool2=false
+str1="a"
+str2=""
+slice1=["a"]
+slice2=["b"]
+slice4=[]
+`,
+			expectedResult: &TestStruct{
+				IntField1:   0,
+				IntField2:   0,
+				IntField3:   2,
+				IntField4:   2,
+				IntField5:   0,
+				BoolField1:  true,
+				BoolField2:  false,
+				BoolField3:  true,
+				StrField1:   "a",
+				StrField2:   "",
+				StrField3:   "a",
+				SliceField1: []string{"a"},
+				SliceField2: []string{"b"},
+				SliceField3: []string{"a"},
+				SliceField4: []string{},
+				SliceField5: nil,
+			},
+		},
+	} {
+		t.Run(desc, func(t *testing.T) {
+			err := mergeConfigTest(test.to, test.from)
+			assert.NoError(t, err)
+			assert.Equal(t, test.expectedResult, test.to)
+		})
+	}
+}
 
 func TestValidateConfig(t *testing.T) {
 	for desc, test := range map[string]struct {
@@ -371,4 +452,16 @@ func TestValidateConfig(t *testing.T) {
 			}
 		})
 	}
+}
+
+func mergeConfigTest(to *TestStruct, from string) error {
+
+	file, err := toml.Load(from)
+	if err != nil {
+		return err
+	}
+	if err := file.Unmarshal(to); err != nil {
+		return err
+	}
+	return nil
 }

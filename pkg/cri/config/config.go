@@ -23,6 +23,9 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/pelletier/go-toml"
+
+	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/plugin"
 )
@@ -324,6 +327,8 @@ type PluginConfig struct {
 	// and if it is not overwritten by PodSandboxConfig
 	// Note that currently default is set to disabled but target change it in future together with EnableUnprivilegedPorts
 	EnableUnprivilegedICMP bool `toml:"enable_unprivileged_icmp" json:"enableUnprivilegedICMP"`
+	//DynamicCRIConfPath defines file for containerd to dynamically load cri config
+	DynamicCRIConfPath string `toml:"dynamic_cri_conf_path" json:"dynamicCriConfPath"`
 }
 
 // X509KeyPairStreaming contains the x509 configuration for streaming
@@ -466,6 +471,38 @@ func ValidatePluginConfig(ctx context.Context, c *PluginConfig) error {
 		if _, err := time.ParseDuration(c.StreamIdleTimeout); err != nil {
 			return fmt.Errorf("invalid stream idle timeout: %w", err)
 		}
+	}
+	return nil
+}
+
+// LoadConfig loads the dynamic cri config from the provided path
+func LoadConfig(path string, out *Config) error {
+	if out == nil {
+		return fmt.Errorf("argument out must not be nil: %w", errdefs.ErrInvalidArgument)
+	}
+
+	if err := mergeConfig(out, path); err != nil {
+		return err
+	}
+	return nil
+}
+
+// mergeConfig merges Config structs with the following rules:
+// 'to'         'from'      'result'
+// ""           "value"     "value"
+// "value"      ""          ""
+// 1            0           1
+// 0            1           1
+// []{"1"}      []{"2"}     []{"2"}
+// []{"1"}      []{}        []{}
+// Maps merged by keys, but values are replaced entirely.
+func mergeConfig(to *Config, from string) error {
+	file, err := toml.LoadFile(from)
+	if err != nil {
+		return err
+	}
+	if err := file.Unmarshal(to); err != nil {
+		return err
 	}
 	return nil
 }
