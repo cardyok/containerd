@@ -310,6 +310,9 @@ func (o *snapshotter) Remove(ctx context.Context, key string) (err error) {
 	_, info, _, err := storage.GetInfo(ctx, key)
 	if err != nil {
 		if strings.Contains(err.Error(), "snapshot does not exist") {
+			if rerr := t.Rollback(); rerr != nil {
+				log.G(ctx).WithError(rerr).Warn("failed to rollback transaction")
+			}
 			return nil
 		}
 		return errors.Wrap(err, "failed to get snapshot info")
@@ -489,6 +492,9 @@ func (o *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 	var base snapshots.Info
 	for _, opt := range opts {
 		if err := opt(&base); err != nil {
+			if rerr := t.Rollback(); rerr != nil {
+				log.G(ctx).WithError(rerr).Warn("failed to rollback transaction")
+			}
 			return nil, err
 		}
 	}
@@ -519,6 +525,9 @@ func (o *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 		}
 
 		if err = os.MkdirAll(homePath, 0711); err != nil {
+			if rerr := t.Rollback(); rerr != nil {
+				log.G(ctx).WithError(rerr).Warn("failed to rollback transaction")
+			}
 			return nil, err
 		}
 		snapshotDir = homePath
