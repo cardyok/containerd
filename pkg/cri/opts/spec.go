@@ -18,16 +18,20 @@ package opts
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/containerd/containerd/containers"
-	"github.com/containerd/containerd/oci"
 	imagespec "github.com/opencontainers/image-spec/specs-go/v1"
 	runtimespec "github.com/opencontainers/runtime-spec/specs-go"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
+
+	"github.com/containerd/containerd/containers"
+	"github.com/containerd/containerd/log"
+	"github.com/containerd/containerd/oci"
 )
 
 // DefaultSandboxCPUshares is default cpu shares for sandbox container.
@@ -112,4 +116,48 @@ func WithAnnotation(k, v string) oci.SpecOpts {
 		s.Annotations[k] = v
 		return nil
 	}
+}
+
+type HookConfig struct {
+	HookType oci.HookType     `json:"type"`
+	Hook     runtimespec.Hook `json:"hook"`
+}
+
+// WithRuntimeHooks load hooks from runtime specified hook config directory and
+func WithRuntimeHooks(ctx context.Context, id string, configDir string) []oci.SpecOpts {
+	if _, err := os.Stat(configDir); err != nil {
+		log.G(ctx).Warnf("stat runtime config dir %s failed %v", configDir, err)
+		return nil
+	}
+
+	files, err := ioutil.ReadDir(configDir)
+	if err != nil {
+		log.G(ctx).Warnf("read runtime config dir %s failed %v", configDir, err)
+		return nil
+	}
+	var hookOpts []oci.SpecOpts
+	//TODO(Chaofeng): Add support for configurable multiple hooks ordering.
+	for _, f := range files {
+		var hookConfig HookConfig
+		if f.IsDir() {
+			continue
+		}
+		file, err := ioutil.ReadFile(filepath.Join(configDir, f.Name()))
+		if err != nil {
+			log.G(ctx).Warnf("failed to read hook config file %s: %v", f.Name(), err)
+			continue
+		}
+		if err := json.Unmarshal(file, &hookConfig); err != nil {
+			log.G(ctx).Warnf("failed to unmarshal hook config file %s: %v", f.Name(), err)
+			continue
+		}
+
+		if hookConfig.HookType == 0 {
+			log.G(ctx).Warnf("hook type not specified for file %s, ignored", f.Name())
+			continue
+		}
+		hookOpts = append(hookOpts, oci.WithHook(hookConfig.HookType, []runtimespec.Hook{hookConfig.Hook}))
+		log.G(ctx).Debugf("Injecting hooks %+v for %s", hookConfig, id)
+	}
+	return hookOpts
 }

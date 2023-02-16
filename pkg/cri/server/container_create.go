@@ -232,6 +232,10 @@ func (c *criService) CreateContainer(ctx context.Context, r *runtime.CreateConta
 		return nil, fmt.Errorf("failed to get container spec opts: %w", err)
 	}
 
+	if ociRuntime.HookConfigDir != "" {
+		specOpts = append(specOpts, customopts.WithRuntimeHooks(ctx, id, ociRuntime.HookConfigDir)...)
+	}
+
 	containerLabels := buildLabels(config.Labels, image.ImageSpec.Config.Labels, containerKindContainer)
 
 	runtimeOptions, err := getRuntimeOptions(sandboxInfo)

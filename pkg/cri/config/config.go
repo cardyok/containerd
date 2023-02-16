@@ -67,6 +67,9 @@ type Runtime struct {
 	// be loaded from the cni config directory by go-cni. Set the value to 0 to
 	// load all config files (no arbitrary limit). The legacy default value is 1.
 	NetworkPluginMaxConfNum int `toml:"cni_max_conf_num" json:"cniMaxConfNum"`
+	// HookConfigDir defines the dir storing oci-hook configurations (if any) for this runtime.
+	// After introducing NRI this field is still needed to inject hooks, nri will be used for adjusting hooks (not initializing)
+	HookConfigDir string `toml:"hook_config_dir" json:"hook_config_dir"`
 }
 
 // ContainerdConfig contains toml config related to containerd

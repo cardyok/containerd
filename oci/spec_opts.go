@@ -28,16 +28,17 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/containerd/continuity/fs"
+	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/opencontainers/runc/libcontainer/user"
+	"github.com/opencontainers/runtime-spec/specs-go"
+
 	"github.com/containerd/containerd/containers"
 	"github.com/containerd/containerd/content"
 	"github.com/containerd/containerd/images"
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/namespaces"
 	"github.com/containerd/containerd/platforms"
-	"github.com/containerd/continuity/fs"
-	v1 "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/opencontainers/runc/libcontainer/user"
-	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
 // SpecOpts sets spec specific information to a newly generated OCI spec
@@ -121,6 +122,13 @@ func ensureAdditionalGids(s *Spec) {
 		}
 	}
 	s.Process.User.AdditionalGids = append([]uint32{s.Process.User.GID}, s.Process.User.AdditionalGids...)
+}
+
+// setHooks sets Linux to empty if unset
+func setHooks(s *Spec) {
+	if s.Hooks == nil {
+		s.Hooks = &specs.Hooks{}
+	}
 }
 
 // WithDefaultSpec returns a SpecOpts that will populate the spec with default
@@ -1402,5 +1410,35 @@ func WithDevShmSize(kb int64) SpecOpts {
 			}
 		}
 		return ErrNoShmMount
+	}
+}
+
+type HookType uint8
+
+const (
+	CreateRuntime HookType = 1 << iota
+	CreateContainer
+	StartContainer
+	PostStart
+	PostStop
+)
+
+// WithHook adds the provided hooks to the spec
+func WithHook(hookType HookType, hooks []specs.Hook) SpecOpts {
+	return func(ctx context.Context, _ Client, c *containers.Container, s *Spec) error {
+		setHooks(s)
+		switch hookType {
+		case CreateRuntime:
+			s.Hooks.CreateRuntime = append(s.Hooks.CreateRuntime, hooks...)
+		case CreateContainer:
+			s.Hooks.CreateContainer = append(s.Hooks.CreateContainer, hooks...)
+		case StartContainer:
+			s.Hooks.StartContainer = append(s.Hooks.StartContainer, hooks...)
+		case PostStart:
+			s.Hooks.Poststart = append(s.Hooks.Poststart, hooks...)
+		case PostStop:
+			s.Hooks.Poststop = append(s.Hooks.Poststop, hooks...)
+		}
+		return nil
 	}
 }
