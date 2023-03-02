@@ -164,7 +164,13 @@ func (c *criService) sandboxContainerSpec(id string, config *runtime.PodSandboxC
 			customopts.WithAnnotation(annotations.SandboxMem, strconv.FormatInt(res.MemoryLimitInBytes, 10)))
 	}
 
-	specOpts = append(specOpts, customopts.WithPodOOMScoreAdj(int(defaultSandboxOOMAdj), c.config.RestrictOOMScoreAdj))
+	oomScore := int(defaultSandboxOOMAdj)
+	if userOOMAdjStr, ok := config.Annotations[annotations.SandboxOOMScoreAdj]; ok && userOOMAdjStr != "" {
+		if userOOMAdj, err := strconv.Atoi(userOOMAdjStr); err == nil && userOOMAdj >= int(defaultSandboxOOMAdj) {
+			oomScore = userOOMAdj
+		}
+	}
+	specOpts = append(specOpts, customopts.WithPodOOMScoreAdj(oomScore, c.config.RestrictOOMScoreAdj))
 
 	for pKey, pValue := range getPassthroughAnnotations(config.Annotations,
 		runtimePodAnnotations) {

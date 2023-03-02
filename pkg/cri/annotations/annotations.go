@@ -63,6 +63,9 @@ const (
 	// to the internal Sandbox.ID created by the containerd sandbox service
 	SandboxUID = "io.kubernetes.cri.sandbox-uid"
 
+	// SandboxOOMScoreAdj is the oom score of the sandbox (pod)
+	SandboxOOMScoreAdj = "io.kubernetes.cri.sandbox_oomscoreadj"
+
 	// SandboxName is the name of the sandbox (pod)
 	SandboxName = "io.kubernetes.cri.sandbox-name"
 
