@@ -143,7 +143,11 @@ func (c *criService) CreateContainer(ctx context.Context, r *runtime.CreateConta
 	var volumeMounts []*runtime.Mount
 	if !c.config.IgnoreImageDefinedVolumes {
 		// Create container image volumes mounts.
-		volumeMounts = c.volumeMounts(containerRootDir, config.GetMounts(), &image.ImageSpec.Config)
+		volumeMountPath := containerRootDir
+		if activePath, ok := config.Annotations["containerd.io/snapshot/overlay.active.path"]; ok && filepath.IsAbs(activePath) {
+			volumeMountPath = filepath.Join(activePath, ".rwlayer")
+		}
+		volumeMounts = c.volumeMounts(volumeMountPath, config.GetMounts(), &image.ImageSpec.Config)
 	} else if len(image.ImageSpec.Config.Volumes) != 0 {
 		log.G(ctx).Debugf("Ignoring volumes defined in image %v because IgnoreImageDefinedVolumes is set", image.ID)
 	}
