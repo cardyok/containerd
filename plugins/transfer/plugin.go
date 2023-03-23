@@ -40,6 +40,7 @@ func init() {
 		Requires: []plugin.Type{
 			plugin.LeasePlugin,
 			plugin.MetadataPlugin,
+			plugin.InternalPlugin,
 		},
 		Config: defaultConfig(),
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
