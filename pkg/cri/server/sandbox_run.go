@@ -20,7 +20,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"math"
+	"os"
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
@@ -478,6 +480,12 @@ func (c *criService) setupPodNetwork(ctx context.Context, sandbox *sandboxstore.
 	if err != nil {
 		return fmt.Errorf("get cni namespace options: %w", err)
 	}
+	customResultPath := filepath.Join(filepath.Dir(sandbox.NetNSPath), fmt.Sprintf(cniResultFormat, sandbox.ID))
+	defer func() {
+		if err := os.Remove(customResultPath); err != nil && !os.IsNotExist(err) {
+			log.G(ctx).Errorf("failed to remove custome cni file %s: %v", customResultPath, err)
+		}
+	}()
 	log.G(ctx).WithField("podsandboxid", id).Debugf("begin cni setup")
 	netStart := time.Now()
 	result, err := netPlugin.Setup(ctx, id, path, opts...)
@@ -515,6 +523,17 @@ func (c *criService) setupPodNetwork(ctx context.Context, sandbox *sandboxstore.
 			sandbox.Config.Annotations = make(map[string]string)
 		}
 		sandbox.Config.Annotations[interfaceIPsAnnotationKey] = string(value)
+	}
+	if customMap, err := customCNIResult(ctx, customResultPath); err == nil {
+		if sandbox.Config.Annotations == nil {
+			sandbox.Config.Annotations = make(map[string]string)
+		}
+		log.G(ctx).Infof("sandbox %s using %s for cni %v", id, customResultPath, customMap)
+		for key, item := range customMap {
+			sandbox.Config.Annotations[key] = item
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		log.G(ctx).Warnf("load sandbox %s cni result file  %s failed: %s", id, customResultPath, err)
 	}
 	return nil
 }
@@ -745,4 +764,23 @@ func logDebugCNIResult(ctx context.Context, sandboxID string, result *cni.Result
 		return
 	}
 	log.G(ctx).WithField("podsandboxid", sandboxID).Debugf("cni result: %s", string(cniResult))
+}
+
+func customCNIResult(ctx context.Context, path string) (result map[string]string, err error) {
+	result = make(map[string]string)
+
+	if f, err := os.Lstat(path); err != nil || f.IsDir() {
+		return result, fmt.Errorf("failed to stat cni result file: %w", err)
+
+	}
+
+	rawData, err := ioutil.ReadFile(path)
+	if err != nil {
+		return result, fmt.Errorf("failed to read cni result file: %w", err)
+	}
+
+	if err := json.Unmarshal(rawData, &result); err != nil {
+		return result, fmt.Errorf("failed to unmarshal cni result file: %w", err)
+	}
+	return result, nil
 }
