@@ -25,11 +25,12 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/sirupsen/logrus"
+
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/remotes/docker/auth"
 	remoteerrors "github.com/containerd/containerd/remotes/errors"
-	"github.com/sirupsen/logrus"
 )
 
 type dockerAuthorizer struct {
@@ -160,7 +161,10 @@ func (a *dockerAuthorizer) AddResponses(ctx context.Context, responses []*http.R
 				delete(a.handlers, host)
 				return err
 			}
-
+			if c.Parameters["error"] == "invalid_token" {
+				log.G(ctx).Debugf("caught invalid token %+v, clean auth handler and try again", c)
+				delete(a.handlers, host)
+			}
 			// reuse existing handler
 			//
 			// assume that one registry will return the common
