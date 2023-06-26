@@ -65,6 +65,10 @@ func (c *criService) containerMetrics(
 		Annotations: meta.Config.GetAnnotations(),
 	}
 
+	if sn.RootPath != "" {
+		cs.WritableLayer.FsId.Mountpoint = sn.RootPath
+	}
+
 	if stats != nil {
 		s, err := typeurl.UnmarshalAny(stats.Data)
 		if err != nil {

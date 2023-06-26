@@ -36,6 +36,8 @@ type Snapshot struct {
 	// Timestamp is latest update time (in nanoseconds) of the snapshot
 	// information.
 	Timestamp int64
+	// RootPath is root storage path for snapshot
+	RootPath string
 }
 
 // Store stores all snapshots.

@@ -19,6 +19,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"github.com/containerd/containerd/log"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -101,6 +102,7 @@ func (s *snapshotsSyncer) sync() error {
 				Key:       info.Name,
 				Kind:      info.Kind,
 				Timestamp: time.Now().UnixNano(),
+				RootPath:  "",
 			}
 			usage, err := s.snapshotter[snName].Usage(ctx, info.Name)
 			if err != nil {
@@ -111,6 +113,21 @@ func (s *snapshotsSyncer) sync() error {
 			}
 			sn.Size = uint64(usage.Size)
 			sn.Inodes = uint64(usage.Inodes)
+			if sn.RootPath == "" && info.Kind == snapshot.KindActive {
+				snInfo, err := s.snapshotter[snName].Stat(ctx, info.Name)
+				if err != nil || snInfo.Labels == nil {
+					if !errdefs.IsNotFound(err) {
+						logrus.WithError(err).Debugf("Failed to get stat for snapshot %q", info.Name)
+					}
+					continue
+				}
+				if rootPath, ok := snInfo.Labels["RootPath"]; ok {
+					sn.RootPath = rootPath
+				}
+			}
+			if sn.RootPath == "" {
+				log.G(ctx).Warnf("Snapshot %v has no root path, WritableLayer field in cri will be skipped", info.Name)
+			}
 			s.store[snName].Add(sn)
 		}
 		for _, sn := range s.store[snName].List() {

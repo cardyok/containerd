@@ -52,33 +52,33 @@ func TestSnapshotStore(t *testing.T) {
 	}
 	assert := assertlib.New(t)
 
-	s := NewStore()
+	s := NewStore([]string{"overlayfs"})
 
 	t.Logf("should be able to add snapshot")
 	for _, sn := range snapshots {
-		s.Add(sn)
+		s["overlayfs"].Add(sn)
 	}
 
 	t.Logf("should be able to get snapshot")
 	for id, sn := range snapshots {
-		got, err := s.Get(id)
+		got, err := s["overlayfs"].Get(id)
 		assert.NoError(err)
 		assert.Equal(sn, got)
 	}
 
 	t.Logf("should be able to list snapshot")
-	sns := s.List()
+	sns := s["overlayfs"].List()
 	assert.Len(sns, 3)
 
 	testKey := "key2"
 
 	t.Logf("should be able to delete snapshot")
-	s.Delete(testKey)
-	sns = s.List()
+	s["overlayfs"].Delete(testKey)
+	sns = s["overlayfs"].List()
 	assert.Len(sns, 2)
 
 	t.Logf("get should return empty struct and ErrNotExist after deletion")
-	sn, err := s.Get(testKey)
+	sn, err := s["overlayfs"].Get(testKey)
 	assert.Equal(Snapshot{}, sn)
 	assert.Equal(errdefs.ErrNotFound, err)
 }

@@ -44,14 +44,14 @@ func (r *Registrar) GetByKey(name string) (string, error) {
 	defer r.lock.Unlock()
 
 	if name == "" {
-		return "", errors.Errorf("invalid name %q", name)
+		return "", fmt.Errorf("invalid name %q", name)
 	}
 
 	if k, exists := r.nameToKey[name]; exists {
 		return k, nil
 	}
 
-	return "", errors.Errorf("Name %q Not Found", name)
+	return "", fmt.Errorf("name %q Not Found", name)
 }
 
 // Reserve registers a name<->key mapping, name or key must not

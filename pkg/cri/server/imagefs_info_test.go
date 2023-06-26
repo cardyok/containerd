@@ -19,11 +19,12 @@ package server
 import (
 	"testing"
 
-	snapshot "github.com/containerd/containerd/snapshots"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/context"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
+
+	snapshot "github.com/containerd/containerd/snapshots"
 
 	snapshotstore "github.com/containerd/containerd/pkg/cri/store/snapshot"
 )
@@ -60,7 +61,7 @@ func TestImageFsInfo(t *testing.T) {
 		InodesUsed: &runtime.UInt64Value{Value: 300},
 	}
 	for _, sn := range snapshots {
-		c.snapshotStore.Add(sn)
+		c.snapshotStore["overlayfs"].Add(sn)
 	}
 	resp, err := c.ImageFsInfo(context.Background(), &runtime.ImageFsInfoRequest{})
 	require.NoError(t, err)

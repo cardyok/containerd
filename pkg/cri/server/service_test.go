@@ -70,6 +70,7 @@ func newTestCRIService() *criService {
 		netPlugin: map[string]cni.CNI{
 			defaultNetworkPlugin: servertesting.NewFakeCNIPlugin(),
 		},
+		snapshotters: []string{"overlayfs"},
 	}
 }
 

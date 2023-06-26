@@ -16,6 +16,7 @@ func TestDetechImagesLogic(t *testing.T) {
 	assert := assertlib.New(t)
 
 	cwdPath, err := os.Getwd()
+	imageFSPath := map[string]string{"overlayfs": cwdPath}
 	assert.NoError(err, "failed to get cwdPath")
 
 	var (
@@ -43,7 +44,7 @@ func TestDetechImagesLogic(t *testing.T) {
 		LowThresholdPercent:  1,
 		MinAge:               10 * time.Second,
 		Whitelist:            []string{imageTag("pause"), imageTag("abc")},
-	}, cwdPath)
+	}, imageFSPath, "overlayfs")
 	assert.NoError(err, "failed to new image garbage collector")
 
 	handler := gcinstance.(*imageGCHandler)
@@ -154,6 +155,7 @@ func TestRemoveUnusedImage(t *testing.T) {
 	assert := assertlib.New(t)
 
 	cwdPath, err := os.Getwd()
+	imageFSPath := map[string]string{"overlayfs": cwdPath}
 	assert.NoError(err, "failed to get cwdPath")
 
 	var (
@@ -181,7 +183,7 @@ func TestRemoveUnusedImage(t *testing.T) {
 		LowThresholdPercent:  1,
 		MinAge:               10 * time.Second,
 		Whitelist:            []string{imageTag("pause")},
-	}, cwdPath)
+	}, imageFSPath, "overlayfs")
 	assert.NoError(err, "failed to new image garbage collector")
 
 	handler := gcinstance.(*imageGCHandler)

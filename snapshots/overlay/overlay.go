@@ -158,6 +158,7 @@ func (o *snapshotter) Stat(ctx context.Context, key string) (snapshots.Info, err
 	info.Labels["Backend-id"] = id
 	info.Labels["Backend-inode"] = strconv.FormatInt(size.Inodes, 10)
 	info.Labels["Backend-size"] = ByteCountDecimal(size.Size)
+	info.Labels["RootPath"] = o.upperPath(&info, id, key)
 
 	if o.upperdirLabel {
 		if info.Labels == nil {
