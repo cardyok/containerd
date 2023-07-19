@@ -87,6 +87,8 @@ const (
 	RuntimeRuncV1 = "io.containerd.runc.v1"
 	// RuntimeRuncV2 is the runc runtime that supports multiple containers per shim
 	RuntimeRuncV2 = "io.containerd.runc.v2"
+	// RuntimeRundV2 is the rund runtime that supports multiple containers per shim
+	RuntimeRundV2 = "io.containerd.rund.v2"
 )
 
 // Registration contains information for registering a plugin

@@ -38,6 +38,7 @@ import (
 	"github.com/containerd/containerd/pkg/cri/annotations"
 	"github.com/containerd/containerd/pkg/cri/config"
 	customopts "github.com/containerd/containerd/pkg/cri/opts"
+	"github.com/containerd/containerd/plugin"
 )
 
 const (
@@ -292,6 +293,9 @@ func (c *criService) containerSpec(
 
 		status := targetContainer.Status.Get()
 		targetPid = status.Pid
+		if ociRuntime.Type == plugin.RuntimeRundV2 {
+			specOpts = append(specOpts, customopts.WithAnnotation(annotations.RundEphemeralContainer, nsOpts.TargetId))
+		}
 	}
 
 	specOpts = append(specOpts,

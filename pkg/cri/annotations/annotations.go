@@ -80,4 +80,31 @@ const (
 
 	// WindowsHostProcess is used by hcsshim to identify windows pods that are running HostProcesses
 	WindowsHostProcess = "microsoft.com/hostprocess-container"
+
+	// ImageUser tells runtime the username to use. According to OCI image
+	// spec, this could be in the following format:
+	// "user,uid,user:group,uid:gid,uid:group,user:gid"
+	ImageUser = "io.containerd.image.user"
+
+	// ImageGids tells runtime the additional gids to the given uid or
+	// username.
+	ImageGids = "io.containerd.image.gids"
+
+	// PodName of the sandbox.
+	PodName = "io.kubernetes.pod.name"
+	// PodNamespace of the sandbox.
+	PodNamespace = "io.kubernetes.pod.namespace"
+	// PodUid of the sandbox.
+	PodUid = "io.kubernetes.pod.uid"
+	// PodAttempt number of creating the sandbox.
+	PodAttempt = "io.kubernetes.pod.attempt"
+	// PodContainerName is name of the container.
+	PodContainerName = "io.kubernetes.container.name"
+
+	// Rund custom annotations
+
+	// RundStorageIsolation is annotation specifying rund should not use builtin storage
+	RundStorageIsolation = "alibabacloud.com/enable-host-custom-storage"
+	// RundEphemeralContainer is annotation specifying ephemeral container id for rund
+	RundEphemeralContainer = "io.katacontainers.shared_pidns"
 )

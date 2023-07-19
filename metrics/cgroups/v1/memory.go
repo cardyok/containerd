@@ -544,7 +544,10 @@ var memoryMetrics = []*metric{
 		unit: metrics.Total,
 		vt:   prometheus.GaugeValue,
 		getValues: func(stats *v1.Metrics) []value {
-			if stats.GetMemory().GetUsage() == nil {
+			if stats.Memory == nil {
+				return nil
+			}
+			if stats.Memory.Usage == nil {
 				return nil
 			}
 			return []value{
@@ -560,7 +563,10 @@ var memoryMetrics = []*metric{
 		unit: metrics.Bytes,
 		vt:   prometheus.GaugeValue,
 		getValues: func(stats *v1.Metrics) []value {
-			if stats.GetMemory().GetUsage() == nil {
+			if stats.Memory == nil {
+				return nil
+			}
+			if stats.Memory.Usage == nil {
 				return nil
 			}
 			return []value{
@@ -576,7 +582,10 @@ var memoryMetrics = []*metric{
 		unit: metrics.Bytes,
 		vt:   prometheus.GaugeValue,
 		getValues: func(stats *v1.Metrics) []value {
-			if stats.GetMemory().GetUsage() == nil {
+			if stats.Memory == nil {
+				return nil
+			}
+			if stats.Memory.Usage == nil {
 				return nil
 			}
 			return []value{
@@ -592,7 +601,10 @@ var memoryMetrics = []*metric{
 		unit: metrics.Bytes,
 		vt:   prometheus.GaugeValue,
 		getValues: func(stats *v1.Metrics) []value {
-			if stats.GetMemory().GetUsage() == nil {
+			if stats.Memory == nil {
+				return nil
+			}
+			if stats.Memory.Usage == nil {
 				return nil
 			}
 			return []value{
@@ -608,7 +620,10 @@ var memoryMetrics = []*metric{
 		unit: metrics.Total,
 		vt:   prometheus.GaugeValue,
 		getValues: func(stats *v1.Metrics) []value {
-			if stats.GetMemory().GetSwap() == nil {
+			if stats.Memory == nil {
+				return nil
+			}
+			if stats.Memory.Swap == nil {
 				return nil
 			}
 			return []value{
@@ -624,7 +639,10 @@ var memoryMetrics = []*metric{
 		unit: metrics.Bytes,
 		vt:   prometheus.GaugeValue,
 		getValues: func(stats *v1.Metrics) []value {
-			if stats.GetMemory().GetSwap() == nil {
+			if stats.Memory == nil {
+				return nil
+			}
+			if stats.Memory.Swap == nil {
 				return nil
 			}
 			return []value{
@@ -640,7 +658,10 @@ var memoryMetrics = []*metric{
 		unit: metrics.Bytes,
 		vt:   prometheus.GaugeValue,
 		getValues: func(stats *v1.Metrics) []value {
-			if stats.GetMemory().GetSwap() == nil {
+			if stats.Memory == nil {
+				return nil
+			}
+			if stats.Memory.Swap == nil {
 				return nil
 			}
 			return []value{
@@ -656,7 +677,10 @@ var memoryMetrics = []*metric{
 		unit: metrics.Bytes,
 		vt:   prometheus.GaugeValue,
 		getValues: func(stats *v1.Metrics) []value {
-			if stats.GetMemory().GetSwap() == nil {
+			if stats.Memory == nil {
+				return nil
+			}
+			if stats.Memory.Swap == nil {
 				return nil
 			}
 			return []value{
@@ -672,7 +696,10 @@ var memoryMetrics = []*metric{
 		unit: metrics.Total,
 		vt:   prometheus.GaugeValue,
 		getValues: func(stats *v1.Metrics) []value {
-			if stats.GetMemory().GetKernel() == nil {
+			if stats.Memory == nil {
+				return nil
+			}
+			if stats.Memory.Kernel == nil {
 				return nil
 			}
 			return []value{
@@ -688,7 +715,10 @@ var memoryMetrics = []*metric{
 		unit: metrics.Bytes,
 		vt:   prometheus.GaugeValue,
 		getValues: func(stats *v1.Metrics) []value {
-			if stats.GetMemory().GetKernel() == nil {
+			if stats.Memory == nil {
+				return nil
+			}
+			if stats.Memory.Kernel == nil {
 				return nil
 			}
 			return []value{
@@ -704,7 +734,10 @@ var memoryMetrics = []*metric{
 		unit: metrics.Bytes,
 		vt:   prometheus.GaugeValue,
 		getValues: func(stats *v1.Metrics) []value {
-			if stats.GetMemory().GetKernel() == nil {
+			if stats.Memory == nil {
+				return nil
+			}
+			if stats.Memory.Kernel == nil {
 				return nil
 			}
 			return []value{
@@ -720,7 +753,10 @@ var memoryMetrics = []*metric{
 		unit: metrics.Bytes,
 		vt:   prometheus.GaugeValue,
 		getValues: func(stats *v1.Metrics) []value {
-			if stats.GetMemory().GetKernel() == nil {
+			if stats.Memory == nil {
+				return nil
+			}
+			if stats.Memory.Kernel == nil {
 				return nil
 			}
 			return []value{
@@ -736,7 +772,10 @@ var memoryMetrics = []*metric{
 		unit: metrics.Total,
 		vt:   prometheus.GaugeValue,
 		getValues: func(stats *v1.Metrics) []value {
-			if stats.GetMemory().GetKernelTCP() == nil {
+			if stats.Memory == nil {
+				return nil
+			}
+			if stats.Memory.KernelTCP == nil {
 				return nil
 			}
 			return []value{
@@ -752,7 +791,10 @@ var memoryMetrics = []*metric{
 		unit: metrics.Bytes,
 		vt:   prometheus.GaugeValue,
 		getValues: func(stats *v1.Metrics) []value {
-			if stats.GetMemory().GetKernelTCP() == nil {
+			if stats.Memory == nil {
+				return nil
+			}
+			if stats.Memory.KernelTCP == nil {
 				return nil
 			}
 			return []value{
@@ -768,7 +810,10 @@ var memoryMetrics = []*metric{
 		unit: metrics.Bytes,
 		vt:   prometheus.GaugeValue,
 		getValues: func(stats *v1.Metrics) []value {
-			if stats.GetMemory().GetKernelTCP() == nil {
+			if stats.Memory == nil {
+				return nil
+			}
+			if stats.Memory.KernelTCP == nil {
 				return nil
 			}
 			return []value{
@@ -784,7 +829,10 @@ var memoryMetrics = []*metric{
 		unit: metrics.Bytes,
 		vt:   prometheus.GaugeValue,
 		getValues: func(stats *v1.Metrics) []value {
-			if stats.GetMemory().GetKernelTCP() == nil {
+			if stats.Memory == nil {
+				return nil
+			}
+			if stats.Memory.KernelTCP == nil {
 				return nil
 			}
 			return []value{
