@@ -430,10 +430,11 @@ func (c *criService) getNetworkPlugin(runtimeClass string) cni.CNI {
 // setupPodNetwork setups up the network for a pod
 func (c *criService) setupPodNetwork(ctx context.Context, sandbox *sandboxstore.Sandbox) error {
 	var (
-		id        = sandbox.ID
-		config    = sandbox.Config
-		path      = sandbox.NetNSPath
-		netPlugin = c.getNetworkPlugin(sandbox.RuntimeHandler)
+		id           = sandbox.ID
+		config       = sandbox.Config
+		path         = sandbox.NetNSPath
+		netPlugin    = c.getNetworkPlugin(sandbox.RuntimeHandler)
+		interfaceIPs map[string][]string
 	)
 	if netPlugin == nil {
 		return errors.New("cni config not initialized")
@@ -461,13 +462,35 @@ func (c *criService) setupPodNetwork(ctx context.Context, sandbox *sandboxstore.
 		return err
 	}
 	logDebugCNIResult(ctx, id, result)
-	// Check if the default interface has IP config
-	if configs, ok := result.Interfaces[defaultIfName]; ok && len(configs.IPConfigs) > 0 {
-		sandbox.IP, sandbox.AdditionalIPs = selectPodIPs(ctx, configs.IPConfigs, c.config.IPPreference)
-		sandbox.CNIResult = result
-		return nil
+	for ifName, configs := range result.Interfaces {
+		if configs != nil && len(configs.IPConfigs) > 0 {
+			if interfaceIPs == nil {
+				interfaceIPs = make(map[string][]string)
+			}
+			for _, ipConf := range configs.IPConfigs {
+				interfaceIPs[ifName] = append(interfaceIPs[ifName], ipConf.IP.String())
+			}
+			// Check if the default interface has IP config
+			if ifName == defaultIfName {
+				sandbox.IP, sandbox.AdditionalIPs = selectPodIPs(ctx, configs.IPConfigs, c.config.IPPreference)
+				sandbox.CNIResult = result
+			}
+		}
 	}
-	return fmt.Errorf("failed to find network info for sandbox %q", id)
+	if sandbox.IP == "" {
+		return fmt.Errorf("failed to find network info for sandbox %q", id)
+	}
+	if interfaceIPs != nil {
+		value, err := json.Marshal(interfaceIPs)
+		if err != nil {
+			return fmt.Errorf("failed to marshal network interface ips for sandbox %q, err: %w", id, err)
+		}
+		if sandbox.Config.Annotations == nil {
+			sandbox.Config.Annotations = make(map[string]string)
+		}
+		sandbox.Config.Annotations[interfaceIPsAnnotationKey] = string(value)
+	}
+	return nil
 }
 
 // cniNamespaceOpts get CNI namespace options from sandbox config.

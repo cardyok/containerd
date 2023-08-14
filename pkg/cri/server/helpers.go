@@ -88,6 +88,12 @@ const (
 
 	// runtimeRunhcsV1 is the runtime type for runhcs.
 	runtimeRunhcsV1 = "io.containerd.runhcs.v1"
+
+	//alibabaCloud is default prefix for all alibabacloud related annotation.
+	alibabaCloud = "alibabacloud.com"
+	// interfaceIPsAnnotationKey is used as the key in sandbox config annotations,
+	// the value is the serialized string of interface:ipArray map.
+	interfaceIPsAnnotationKey = alibabaCloud + "/interface-ips"
 )
 
 // makeSandboxName generates sandbox name from sandbox metadata. The name
