@@ -25,6 +25,11 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/containerd/ttrpc"
+	ptypes "github.com/gogo/protobuf/types"
+	"github.com/hashicorp/go-multierror"
+	"github.com/sirupsen/logrus"
+
 	eventstypes "github.com/containerd/containerd/api/events"
 	"github.com/containerd/containerd/api/types"
 	tasktypes "github.com/containerd/containerd/api/types/task"
@@ -35,12 +40,9 @@ import (
 	"github.com/containerd/containerd/namespaces"
 	"github.com/containerd/containerd/pkg/timeout"
 	"github.com/containerd/containerd/runtime"
+	"github.com/containerd/containerd/runtime/v2/logging"
 	client "github.com/containerd/containerd/runtime/v2/shim"
 	"github.com/containerd/containerd/runtime/v2/task"
-	"github.com/containerd/ttrpc"
-	ptypes "github.com/gogo/protobuf/types"
-	"github.com/hashicorp/go-multierror"
-	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -63,7 +65,7 @@ func loadAddress(path string) (string, error) {
 	return string(data), nil
 }
 
-func loadShim(ctx context.Context, bundle *Bundle, onClose func()) (_ *shimTask, err error) {
+func loadShim(ctx context.Context, runtime string, bundle *Bundle, onClose func()) (_ *shimTask, err error) {
 	address, err := loadAddress(filepath.Join(bundle.Path, "address"))
 	if err != nil {
 		return nil, err
@@ -83,6 +85,7 @@ func loadShim(ctx context.Context, bundle *Bundle, onClose func()) (_ *shimTask,
 			cancelShimLog()
 		}
 	}()
+	shimLogger, loggerClose := logging.GetShimLogger(ctx, runtime, bundle.Namespace, bundle.ID)
 	f, err := openShimLog(shimCtx, bundle, client.AnonReconnectDialer)
 	if err != nil {
 		return nil, fmt.Errorf("open shim log pipe when reload: %w", err)
@@ -96,8 +99,9 @@ func loadShim(ctx context.Context, bundle *Bundle, onClose func()) (_ *shimTask,
 	// this helps with synchronization of the shim
 	// copy the shim's logs to containerd's output
 	go func() {
+		defer loggerClose()
 		defer f.Close()
-		_, err := io.Copy(os.Stderr, f)
+		_, err := io.Copy(shimLogger, f)
 		// To prevent flood of error messages, the expected error
 		// should be reset, like os.ErrClosed or os.ErrNotExist, which
 		// depends on platform.
@@ -109,6 +113,7 @@ func loadShim(ctx context.Context, bundle *Bundle, onClose func()) (_ *shimTask,
 	onCloseWithShimLog := func() {
 		onClose()
 		cancelShimLog()
+		loggerClose()
 		f.Close()
 	}
 	client := ttrpc.NewClient(conn, ttrpc.WithOnClose(onCloseWithShimLog), ttrpc.WithUnaryClientInterceptor(MakeTTRPCInterceptorByAddr(address)))

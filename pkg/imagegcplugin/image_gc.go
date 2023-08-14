@@ -2,6 +2,7 @@ package imagegcplugin
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"regexp"
 	"sort"
@@ -9,13 +10,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pkg/errors"
-
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/mount"
 )
 
-var errUnexpectedFSCapacity = errors.Errorf("unexpected fs capacity")
+var errUnexpectedFSCapacity = fmt.Errorf("unexpected fs capacity")
 
 type imageGCHandler struct {
 	criruntime       CRIRuntime
@@ -40,13 +39,13 @@ func NewImageGarbageCollect(criruntime CRIRuntime, policy GcPolicy, imageFSPath 
 	if policy.WhitelistGoRegex != "" {
 		whitelistGoRegex, err = regexp.Compile(policy.WhitelistGoRegex)
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to compile whitelist go regexp: %s", policy.WhitelistGoRegex)
+			return nil, fmt.Errorf("failed to compile whitelist go regexp: %s: %w", policy.WhitelistGoRegex, err)
 		}
 	}
 
 	info, err := mount.Lookup(imageFSPath[snapshotter])
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to lookup image fs path in mountinfo")
+		return nil, fmt.Errorf("failed to lookup image fs path in mountinfo: %w", err)
 	}
 
 	return &imageGCHandler{
@@ -61,19 +60,19 @@ func NewImageGarbageCollect(criruntime CRIRuntime, policy GcPolicy, imageFSPath 
 
 func validateGCPolicy(policy GcPolicy) error {
 	if policy.HighThresholdPercent <= 0 || policy.HighThresholdPercent > 100 {
-		return errors.Errorf("invalid highThresholdPercent %d, must be in range [0-100]", policy.HighThresholdPercent)
+		return fmt.Errorf("invalid highThresholdPercent %d, must be in range [0-100]", policy.HighThresholdPercent)
 	}
 	if policy.LowThresholdPercent <= 0 || policy.LowThresholdPercent > 100 {
-		return errors.Errorf("invalid LowThresholdPercent %d, must be in range [0-100]", policy.LowThresholdPercent)
+		return fmt.Errorf("invalid LowThresholdPercent %d, must be in range [0-100]", policy.LowThresholdPercent)
 	}
 	if policy.LowThresholdPercent >= policy.HighThresholdPercent {
-		return errors.Errorf("lowThresholdPercent %d can not be >= HighThresholdPercent %d", policy.LowThresholdPercent, policy.HighThresholdPercent)
+		return fmt.Errorf("lowThresholdPercent %d can not be >= HighThresholdPercent %d", policy.LowThresholdPercent, policy.HighThresholdPercent)
 	}
 	if policy.MinAge == 0 {
-		return errors.Errorf("image min age can not be zero duration")
+		return fmt.Errorf("image min age can not be zero duration")
 	}
 	if len(policy.Whitelist) == 0 {
-		return errors.Errorf("whitelist can not be empty, at least there is one pause infra image")
+		return fmt.Errorf("whitelist can not be empty, at least there is one pause infra image")
 	}
 	return nil
 
@@ -105,11 +104,11 @@ func (handler *imageGCHandler) calculateFreeSizes(ctx context.Context) (uint64, 
 	}
 
 	if fsstatinfo.capacityBytes == 0 {
-		return 0, errors.Wrapf(errUnexpectedFSCapacity, "0 bytes filesystem for image fs path %s", handler.imageFSPath)
+		return 0, fmt.Errorf("0 bytes filesystem for image fs path %s: %w", handler.imageFSPath, errUnexpectedFSCapacity)
 	}
 
 	if fsstatinfo.availableBytes > fsstatinfo.capacityBytes {
-		return 0, errors.Wrapf(errUnexpectedFSCapacity, "freesize > capacity on filesystem for image fs path %s", handler.imageFSPath)
+		return 0, fmt.Errorf("freesize > capacity on filesystem for image fs path %s: %w", handler.imageFSPath, errUnexpectedFSCapacity)
 	}
 
 	usagePercent := 100 - int(fsstatinfo.availableBytes*100/fsstatinfo.capacityBytes)
@@ -128,12 +127,12 @@ func (handler *imageGCHandler) detectImages(ctx context.Context, detected time.T
 
 	imagesFromCRI, err := handler.criruntime.ListImages(ctx)
 	if err != nil {
-		return usedImageSet, errors.Wrap(err, "failed to list images from CRI")
+		return usedImageSet, fmt.Errorf("failed to list images from CRI: %w", err)
 	}
 
 	containersFromCRI, err := handler.criruntime.ListContainers(ctx)
 	if err != nil {
-		return usedImageSet, errors.Wrap(err, "failed to list containers from CRI")
+		return usedImageSet, fmt.Errorf("failed to list containers from CRI: %w", err)
 	}
 
 	// init used image id set
@@ -251,7 +250,7 @@ func (handler *imageGCHandler) pruneImages(ctx context.Context, totalSize uint64
 	}
 
 	if len(failedToRemoveImages) > 0 {
-		return freedSize, errors.Errorf("freed %v bytes but failed to images: %v", freedSize, failedToRemoveImages)
+		return freedSize, fmt.Errorf("freed %v bytes but failed to images: %v", freedSize, failedToRemoveImages)
 	}
 	return freedSize, nil
 }
@@ -268,7 +267,7 @@ func (handler *imageGCHandler) imageFSStats(ctx context.Context) (fsStats, error
 
 	var statfs syscall.Statfs_t
 	if err := syscall.Fstatfs(int(f.Fd()), &statfs); err != nil {
-		return fsStats{}, errors.Wrapf(err, "failed to calculate statfs for mountinfo %v", handler.imageFSMountpoint)
+		return fsStats{}, fmt.Errorf("failed to calculate statfs for mountinfo %v: %w", handler.imageFSMountpoint, err)
 	}
 
 	return fsStats{

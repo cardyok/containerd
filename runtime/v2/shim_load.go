@@ -128,7 +128,7 @@ func (m *ShimManager) loadShims(ctx context.Context) error {
 				ttrpcAddress: m.containerdTTRPCAddress,
 				schedCore:    m.schedCore,
 			})
-		shim, err := loadShim(ctx, bundle, func() {
+		shim, err := loadShim(ctx, runtime, bundle, func() {
 			log.G(ctx).WithField("id", id).Info("shim disconnected")
 
 			cleanupAfterDeadShim(context.Background(), id, ns, m.shims, m.events, binaryCall)

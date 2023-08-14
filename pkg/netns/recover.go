@@ -1,12 +1,13 @@
 package netns
 
 import (
-	cnins "github.com/containernetworking/plugins/pkg/ns"
-	"github.com/pkg/errors"
-	"golang.org/x/sys/unix"
+	"fmt"
 	"os"
 	"runtime"
 	"sync"
+
+	cnins "github.com/containernetworking/plugins/pkg/ns"
+	"golang.org/x/sys/unix"
 )
 
 const nsRunDir = "/var/run/netns"
@@ -15,7 +16,7 @@ const nsRunDir = "/var/run/netns"
 // Otherwise, do nothing.
 func RecoverNetNS(nsPath string) error {
 	if nsPath == "" {
-		return errors.Errorf("cannot pass empty netns path")
+		return fmt.Errorf("cannot pass empty netns path")
 	}
 	_, err := cnins.GetNS(nsPath)
 	if err == nil {
@@ -66,9 +67,9 @@ func RecoverNetNS(nsPath string) error {
 		// are no threads in the ns.
 		err = unix.Mount(getCurrentThreadNetNSPath(), nsPath, "none", unix.MS_BIND, "")
 		if err != nil {
-			err = errors.Wrapf(err, "failed to bind mount ns at %s", nsPath)
+			err = fmt.Errorf("failed to bind mount ns at %s: %w", nsPath, err)
 		}
 	})()
 	wg.Wait()
-	return errors.Wrapf(err, "failed to create namespace on %s", nsPath)
+	return fmt.Errorf("failed to create namespace on %s: %w", nsPath, err)
 }

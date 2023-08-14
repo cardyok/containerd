@@ -1,10 +1,9 @@
 package imagegcplugin
 
 import (
+	"fmt"
 	"os"
 	"path"
-
-	"github.com/pkg/errors"
 
 	"github.com/containerd/containerd/plugin"
 )
@@ -37,7 +36,7 @@ func initImageGCSwitchPlugin(ic *plugin.InitContext) (interface{}, error) {
 	pluginConfig := ic.Config.(*Config)
 
 	if err := os.MkdirAll(ic.Root, 0755); err != nil {
-		return nil, errors.Wrapf(err, "failed to make dir %s for imagegcswitch plugin", ic.Root)
+		return nil, fmt.Errorf("failed to make dir %s for imagegcswitch plugin: %w", ic.Root, err)
 	}
 	return &imagegcswitch{
 		config:     *pluginConfig,

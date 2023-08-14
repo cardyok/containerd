@@ -24,6 +24,8 @@ import (
 	"path/filepath"
 	"sync"
 
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
 	"github.com/containerd/containerd/containers"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/events/exchange"
@@ -34,9 +36,9 @@ import (
 	"github.com/containerd/containerd/platforms"
 	"github.com/containerd/containerd/plugin"
 	"github.com/containerd/containerd/runtime"
+	"github.com/containerd/containerd/runtime/v2/logging"
 	shimbinary "github.com/containerd/containerd/runtime/v2/shim"
 	"github.com/containerd/containerd/runtime/v2/task"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 // Config for the v2 runtime
@@ -45,6 +47,8 @@ type Config struct {
 	Platforms []string `toml:"platforms"`
 	// SchedCore enabled linux core scheduling
 	SchedCore bool `toml:"sched_core"`
+	// ShimLoggingDir defines log dir for runtimes
+	ShimLoggingDir map[string]log.LoggerConfig `toml:"logging"`
 }
 
 func init() {
@@ -78,6 +82,9 @@ func init() {
 			cs := metadata.NewContainerStore(m.(*metadata.DB))
 			events := ep.(*exchange.Exchange)
 
+			for runtimeType, loggerConfig := range ic.Config.(*Config).ShimLoggingDir {
+				logging.SetShimLogger(context.Background(), loggerConfig, runtimeType)
+			}
 			shimManager, err := NewShimManager(ic.Context, &ManagerConfig{
 				Root:         ic.Root,
 				State:        ic.State,

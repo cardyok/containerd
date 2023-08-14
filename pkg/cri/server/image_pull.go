@@ -545,14 +545,14 @@ func (c *criService) getSnapshotterFromSandbox(ctx context.Context, sandboxConfi
 	if sandbox, err := c.sandboxStore.Get(id); err == nil {
 		ociRuntime, err = c.getSandboxRuntime(sandboxConfig, sandbox.RuntimeHandler)
 		if err != nil {
-			return "", errors.Wrap(err, "Failed to get Sandbox Runtime.")
+			return "", fmt.Errorf("failed to get Sandbox Runtime: %w", err)
 		}
 	} else {
 		log.G(ctx).Debugf("Failed to find sandbox %q", id)
 	}
 
 	snapshotter, err := c.getSandboxSnapshotter(ctx, sandboxConfig, ociRuntime)
-	return snapshotter, errors.Wrap(err, "Failed to get snapshotter.")
+	return snapshotter, errors.Wrap(err, "failed to get snapshotter")
 }
 
 const (

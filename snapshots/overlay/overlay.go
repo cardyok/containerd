@@ -30,7 +30,6 @@ import (
 	"syscall"
 
 	"github.com/containerd/continuity/fs"
-	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
 	"github.com/containerd/containerd/errdefs"
@@ -316,13 +315,13 @@ func (o *snapshotter) Remove(ctx context.Context, key string) (err error) {
 			}
 			return nil
 		}
-		return errors.Wrap(err, "failed to get snapshot info")
+		return fmt.Errorf("failed to get snapshot info: %w", err)
 	}
 
 	var home string
 	if home, err = getActivePath(&info, key); err == nil {
 		if err = removeActivePath(&info, key); err != nil {
-			return errors.Wrapf(err, "failed to remove directory %v", home)
+			return fmt.Errorf("failed to remove directory %v: %w", home, err)
 		}
 	}
 

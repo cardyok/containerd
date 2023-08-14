@@ -21,7 +21,8 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/pkg/errors"
+	imagespec "github.com/opencontainers/image-spec/specs-go/v1"
+	"k8s.io/klog/v2"
 
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/api/services/containers/v1"
@@ -38,8 +39,6 @@ import (
 	"github.com/containerd/containerd/plugin"
 	"github.com/containerd/containerd/services"
 	"github.com/containerd/containerd/snapshots"
-	imagespec "github.com/opencontainers/image-spec/specs-go/v1"
-	"k8s.io/klog/v2"
 
 	criconfig "github.com/containerd/containerd/pkg/cri/config"
 	"github.com/containerd/containerd/pkg/cri/constants"
@@ -108,7 +107,7 @@ func initCRIService(ic *plugin.InitContext) (interface{}, error) {
 	// link: https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=949235
 	log.G(ctx).Info("Create place holder netns to avoid kernel bug")
 	if err := netns.RecoverNetNS("/var/run/netns/CONTAINERD_PLACE_HOLDER"); err != nil {
-		return nil, errors.Wrap(err, "failed to create place holder netns")
+		return nil, fmt.Errorf("failed to create place holder netns: %w", err)
 	}
 
 	s, err := server.NewCRIService(c, client)
@@ -117,7 +116,7 @@ func initCRIService(ic *plugin.InitContext) (interface{}, error) {
 	}
 
 	if err := initImageGCForCri(ic, s.(initializeImageGC)); err != nil {
-		return nil, errors.Wrap(err, "failed to init image gc for cri")
+		return nil, fmt.Errorf("failed to init image gc for cri: %w", err)
 	}
 
 	go func() {
@@ -218,21 +217,21 @@ func initImageGCForCri(ic *plugin.InitContext, handler initializeImageGC) error 
 	// init image gc
 	internalPlugins, err := ic.GetByType(plugin.InternalPlugin)
 	if err != nil {
-		return errors.Wrap(err, "failed to get internal plugins")
+		return fmt.Errorf("failed to get internal plugins: %w", err)
 	}
 
 	imageGCSwitch := internalPlugins[imagegcplugin.SwitchPluginName]
 	if imageGCSwitch == nil {
-		return errors.Wrap(err, "failed to get internal plugin for image gc switch")
+		return fmt.Errorf("failed to get internal plugin for image gc switch: %w", err)
 	}
 
 	gcSwitchInstance, err := imageGCSwitch.Instance()
 	if err != nil {
-		return errors.Wrap(err, "failed to get image gc switch instance")
+		return fmt.Errorf("failed to get image gc switch instance: %w", err)
 	}
 
 	if err := handler.InitImageGC(gcSwitchInstance.(imagegcplugin.Status)); err != nil {
-		return errors.Wrap(err, "failed to init image gc")
+		return fmt.Errorf("failed to init image gc: %w", err)
 	}
 	return nil
 }

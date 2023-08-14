@@ -2,10 +2,10 @@ package imagegcplugin
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"testing"
 
-	"github.com/pkg/errors"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 )
 
@@ -136,5 +136,5 @@ func (f *fakeCRIRuntime) RemoveImage(_ context.Context, r *runtime.RemoveImageRe
 			return &runtime.RemoveImageResponse{}, nil
 		}
 	}
-	return nil, errors.Errorf("not found")
+	return nil, fmt.Errorf("not found")
 }

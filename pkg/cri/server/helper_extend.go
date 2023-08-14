@@ -1,7 +1,8 @@
 package server
 
 import (
-	"github.com/pkg/errors"
+	"fmt"
+
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 
 	"github.com/containerd/containerd/errdefs"
@@ -28,17 +29,17 @@ func checkStringSlice(src []string, target string) bool {
 // getPodSnapshotter tries to retrieve specified snapshotter from pod config annotation and label
 func getPodSnapshotter(config *runtime.PodSandboxConfig, snapshotters []string) (string, error) {
 	if config == nil {
-		return "", errors.Wrapf(errdefs.ErrUnavailable, "pod config file empty")
+		return "", fmt.Errorf("pod config file empty: %w", errdefs.ErrUnavailable)
 	}
 	if val, ok := config.Annotations[snapshotterAnno]; ok {
 		if found := checkStringSlice(snapshotters, val); !found {
-			return "", errors.Wrapf(errdefs.ErrNotFound, "snapshotter %s specified in annotation not supported", val)
+			return "", fmt.Errorf("snapshotter %s specified in annotation not supported: %w", val, errdefs.ErrNotFound)
 		}
 		return val, nil
 	}
 	if val, ok := config.Labels[snapshotterLabel]; ok {
 		if found := checkStringSlice(snapshotters, val); !found {
-			return "", errors.Wrapf(errdefs.ErrNotFound, "snapshotter %s specified in label not supported", val)
+			return "", fmt.Errorf("snapshotter %s specified in label not supported: %w", val, errdefs.ErrNotFound)
 		}
 		return val, nil
 	}

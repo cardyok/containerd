@@ -27,19 +27,22 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/sirupsen/logrus"
+	"github.com/urfave/cli"
+	"google.golang.org/grpc/grpclog"
+	"gopkg.in/natefinch/lumberjack.v2"
+
 	"github.com/containerd/containerd/defaults"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/log"
 	_ "github.com/containerd/containerd/metrics" // import containerd build info
 	"github.com/containerd/containerd/mount"
+	"github.com/containerd/containerd/runtime/v2/logging"
 	"github.com/containerd/containerd/services/server"
 	srvconfig "github.com/containerd/containerd/services/server/config"
 	"github.com/containerd/containerd/sys"
 	"github.com/containerd/containerd/tracing"
 	"github.com/containerd/containerd/version"
-	"github.com/sirupsen/logrus"
-	"github.com/urfave/cli"
-	"google.golang.org/grpc/grpclog"
 )
 
 const usage = `
@@ -136,6 +139,29 @@ can be used and modified as necessary as a custom configuration.`
 		// Make sure top-level directories are created early.
 		if err := server.CreateTopLevelDirectories(config); err != nil {
 			return err
+		}
+
+		logging.DefaultLogger = os.Stderr
+		if config.Logger.LogPath != "" {
+			logger := &lumberjack.Logger{
+				Filename:         config.Logger.LogPath,
+				MaxSize:          500,
+				MaxBackups:       3,
+				Compress:         true,
+				CompressRate:     10 * 1024 * 1024,
+				CompressCapacity: 10 * 1024 * 1024,
+			}
+			if config.Logger.LogReplica != 0 {
+				logger.MaxBackups = config.Logger.LogReplica
+			}
+			if config.Logger.LogSize != 0 {
+				logger.MaxSize = config.Logger.LogSize
+			}
+			if config.Logger.NoCompress {
+				logger.Compress = false
+			}
+			logrus.SetOutput(logger)
+			logging.DefaultLogger = logger
 		}
 
 		// Stop if we are registering or unregistering against Windows SCM.

@@ -26,6 +26,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/containerd/containerd/errdefs"
+	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/plugin"
 )
 
@@ -69,6 +70,8 @@ type Config struct {
 	Timeouts map[string]string `toml:"timeouts"`
 	// Imports are additional file path list to config files that can overwrite main config file fields
 	Imports []string `toml:"imports"`
+	// Logger for containerd main process
+	Logger log.LoggerConfig `toml:"logger"`
 	// StreamProcessors configuration
 	StreamProcessors map[string]StreamProcessor `toml:"stream_processors"`
 }

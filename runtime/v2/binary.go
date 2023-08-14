@@ -26,13 +26,15 @@ import (
 	gruntime "runtime"
 	"strings"
 
+	"github.com/containerd/ttrpc"
+	"github.com/gogo/protobuf/types"
+
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/namespaces"
 	"github.com/containerd/containerd/runtime"
+	"github.com/containerd/containerd/runtime/v2/logging"
 	client "github.com/containerd/containerd/runtime/v2/shim"
 	"github.com/containerd/containerd/runtime/v2/task"
-	"github.com/containerd/ttrpc"
-	"github.com/gogo/protobuf/types"
 )
 
 type shimBinaryConfig struct {
@@ -90,6 +92,7 @@ func (b *binary) Start(ctx context.Context, opts *types.Any, onClose func()) (_ 
 			cancelShimLog()
 		}
 	}()
+	shimLogger, loggerClose := logging.GetShimLogger(ctx, b.runtime, ns, b.bundle.ID)
 	f, err := openShimLog(shimCtx, b.bundle, client.AnonDialer)
 	if err != nil {
 		return nil, fmt.Errorf("open shim log pipe: %w", err)
@@ -103,8 +106,9 @@ func (b *binary) Start(ctx context.Context, opts *types.Any, onClose func()) (_ 
 	// this helps with synchronization of the shim
 	// copy the shim's logs to containerd's output
 	go func() {
+		defer loggerClose()
 		defer f.Close()
-		_, err := io.Copy(os.Stderr, f)
+		_, err := io.Copy(shimLogger, f)
 		// To prevent flood of error messages, the expected error
 		// should be reset, like os.ErrClosed or os.ErrNotExist, which
 		// depends on platform.
@@ -125,6 +129,7 @@ func (b *binary) Start(ctx context.Context, opts *types.Any, onClose func()) (_ 
 	onCloseWithShimLog := func() {
 		onClose()
 		cancelShimLog()
+		loggerClose()
 		f.Close()
 	}
 	// Save runtime binary path for restore.
