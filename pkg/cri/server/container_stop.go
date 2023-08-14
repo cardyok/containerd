@@ -22,15 +22,17 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/moby/sys/signal"
+	"golang.org/x/net/context"
+	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
+
+	"github.com/containerd/containerd"
 	eventtypes "github.com/containerd/containerd/api/events"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/log"
 	containerstore "github.com/containerd/containerd/pkg/cri/store/container"
 	ctrdutil "github.com/containerd/containerd/pkg/cri/util"
-
-	"github.com/moby/sys/signal"
-	"golang.org/x/net/context"
-	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
+	containerdTimeout "github.com/containerd/containerd/pkg/timeout"
 )
 
 // StopContainer stops a running container with a grace period (i.e., timeout).
@@ -148,7 +150,9 @@ func (c *criService) stopContainer(ctx context.Context, container containerstore
 
 		if sswt {
 			log.G(ctx).Infof("Stop container %q with signal %v", id, sig)
-			if err = task.Kill(ctx, sig); err != nil && !errdefs.IsNotFound(err) {
+			killCtx, killCancel := containerdTimeout.WithContext(ctx, containerKillSignalTimeout)
+			defer killCancel()
+			if err = task.Kill(killCtx, sig); err != nil && !errdefs.IsNotFound(err) {
 				return fmt.Errorf("failed to stop container %q: %w", id, err)
 			}
 		} else {
@@ -170,8 +174,10 @@ func (c *criService) stopContainer(ctx context.Context, container containerstore
 		log.G(ctx).Debugf("Stop container %q with signal %v timed out", id, sig)
 	}
 
-	log.G(ctx).Infof("Kill container %q", id)
-	if err = task.Kill(ctx, syscall.SIGKILL); err != nil && !errdefs.IsNotFound(err) {
+	log.G(ctx).Infof("Kill container %q signal sent with timeout %v", id, containerdTimeout.Get(containerKillSignalTimeout))
+	killCtx2, killCancel2 := containerdTimeout.WithContext(ctx, containerKillSignalTimeout)
+	defer killCancel2()
+	if err = task.Kill(killCtx2, syscall.SIGKILL, containerd.WithKillAll); err != nil && !errdefs.IsNotFound(err) {
 		return fmt.Errorf("failed to kill container %q: %w", id, err)
 	}
 

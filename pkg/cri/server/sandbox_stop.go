@@ -19,18 +19,21 @@ package server
 import (
 	"errors"
 	"fmt"
+	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 
-	eventtypes "github.com/containerd/containerd/api/events"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/log"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 
+	eventtypes "github.com/containerd/containerd/api/events"
+	"github.com/containerd/containerd/errdefs"
+	"github.com/containerd/containerd/log"
 	sandboxstore "github.com/containerd/containerd/pkg/cri/store/sandbox"
 	ctrdutil "github.com/containerd/containerd/pkg/cri/util"
+	"github.com/containerd/containerd/pkg/timeout"
 )
 
 // StopPodSandbox stops the sandbox. If there are any running containers in the
@@ -65,7 +68,10 @@ func (c *criService) stopPodSandbox(ctx context.Context, sandbox sandboxstore.Sa
 		// Forcibly stop the container. Do not use `StopContainer`, because it introduces a race
 		// if a container is removed after list.
 		if err := c.stopContainer(ctx, container, 0); err != nil {
-			return fmt.Errorf("failed to stop container %q: %w", container.ID, err)
+			if !strings.Contains(err.Error(), "context deadline exceeded") {
+				return fmt.Errorf("failed to stop container %q: %w", container.ID, err)
+			}
+			log.G(ctx).Warnf("stop container %q during stop sandbox %q timeout, skip and wait for sandbox force cleanup.", container.ID, id)
 		}
 	}
 
@@ -109,9 +115,29 @@ func (c *criService) stopPodSandbox(ctx context.Context, sandbox sandboxstore.Sa
 // stopSandboxContainer kills the sandbox container.
 // `task.Delete` is not called here because it will be called when
 // the event monitor handles the `TaskExit` event.
-func (c *criService) stopSandboxContainer(ctx context.Context, sandbox sandboxstore.Sandbox) error {
+func (c *criService) stopSandboxContainer(ctx context.Context, sandbox sandboxstore.Sandbox) (retErr error) {
 	id := sandbox.ID
 	container := sandbox.Container
+
+	defer func() {
+		if retErr != nil {
+			log.G(ctx).WithError(retErr).Errorf("stopSandboxContainer defer error %v", id)
+			info, defErr := sandbox.Container.Info(ctx)
+			if defErr != nil {
+				log.G(ctx).WithError(defErr).Errorf("failed to do force check since can not get container %s info", id)
+				return
+			}
+			// only force kill or rund if timeout
+			if (strings.Contains(info.Runtime.Name, "rund.v2")) && ctx.Err() == context.DeadlineExceeded {
+				if fkerr := forceKillContainer(ctx, id); fkerr == nil {
+					retErr = nil
+				} else {
+					log.G(ctx).Errorf("Force kill sandbox container %q failed: %v", id, fkerr)
+				}
+			}
+		}
+	}()
+
 	state := sandbox.Status.Get().State
 	task, err := container.Task(ctx, nil)
 	if err != nil {
@@ -151,11 +177,26 @@ func (c *criService) stopSandboxContainer(ctx context.Context, sandbox sandboxst
 	}
 
 	// Kill the sandbox container.
-	if err = task.Kill(ctx, syscall.SIGKILL); err != nil && !errdefs.IsNotFound(err) {
-		return fmt.Errorf("failed to kill sandbox container: %w", err)
+	killCtx, killCancel := timeout.WithContext(ctx, sandboxKillSignalTimeout)
+	defer killCancel()
+	log.G(ctx).Infof("Kill sandbox %q with timeout %v", id, timeout.Get(sandboxKillSignalTimeout))
+	if err = task.Kill(killCtx, syscall.SIGKILL); err != nil && !errdefs.IsNotFound(err) {
+		log.G(ctx).Infof("Kill sandbox container %q error: %v, try to force kill", id, err)
+		if fkerr := forceKillContainer(ctx, id); fkerr != nil {
+			log.G(ctx).Errorf("Force kill sandbox container %q failed: %v", id, fkerr)
+			return fmt.Errorf("failed to kill sandbox container: %w", err)
+		}
 	}
 
 	return c.waitSandboxStop(ctx, sandbox)
+}
+
+func forceKillContainer(ctx context.Context, id string) error {
+	ctx, cancel := timeout.WithContext(ctx, sandboxKillSignalTimeout)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "/opt/containerd/script/make_sure_stop.sh", id).CombinedOutput()
+	log.G(ctx).Infof("force kill %v output: %v", id, string(output))
+	return fmt.Errorf("force kill error %s: %w", string(output), err)
 }
 
 // waitSandboxStop waits for sandbox to be stopped until context is cancelled or

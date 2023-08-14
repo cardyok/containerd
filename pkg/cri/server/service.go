@@ -26,33 +26,45 @@ import (
 	"sync"
 	"time"
 
-	"github.com/containerd/containerd"
-	"github.com/containerd/containerd/oci"
-	"github.com/containerd/containerd/pkg/cri/streaming"
-	"github.com/containerd/containerd/pkg/kmutex"
-	"github.com/containerd/containerd/plugin"
 	cni "github.com/containerd/go-cni"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 	runtime_alpha "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
 
-	"github.com/containerd/containerd/pkg/cri/store/label"
-
+	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/content/local"
+	"github.com/containerd/containerd/oci"
 	"github.com/containerd/containerd/pkg/atomic"
 	criconfig "github.com/containerd/containerd/pkg/cri/config"
 	containerstore "github.com/containerd/containerd/pkg/cri/store/container"
 	imagestore "github.com/containerd/containerd/pkg/cri/store/image"
+	"github.com/containerd/containerd/pkg/cri/store/label"
 	sandboxstore "github.com/containerd/containerd/pkg/cri/store/sandbox"
 	snapshotstore "github.com/containerd/containerd/pkg/cri/store/snapshot"
+	"github.com/containerd/containerd/pkg/cri/streaming"
 	ctrdutil "github.com/containerd/containerd/pkg/cri/util"
+	"github.com/containerd/containerd/pkg/kmutex"
 	osinterface "github.com/containerd/containerd/pkg/os"
 	"github.com/containerd/containerd/pkg/registrar"
+	"github.com/containerd/containerd/pkg/timeout"
+	"github.com/containerd/containerd/plugin"
+)
+
+const (
+	//sandboxKillSignalTimeout is timeout for sandbox kill signal
+	sandboxKillSignalTimeout = "io.containerd.cri.timeout.sandbox.kill"
+	//containerKillSignalTimeout is timeout for container kill signal
+	containerKillSignalTimeout = "io.containerd.cri.timeout.container.kill"
 )
 
 // defaultNetworkPlugin is used for the default CNI configuration
 const defaultNetworkPlugin = "default"
+
+func init() {
+	timeout.Set(sandboxKillSignalTimeout, 5*time.Second)
+	timeout.Set(containerKillSignalTimeout, 5*time.Second)
+}
 
 // grpcServices are all the grpc services provided by cri containerd.
 type grpcServices interface {
