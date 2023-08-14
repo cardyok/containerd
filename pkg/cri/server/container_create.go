@@ -17,6 +17,7 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -27,6 +28,7 @@ import (
 	imagespec "github.com/opencontainers/image-spec/specs-go/v1"
 	runtimespec "github.com/opencontainers/runtime-spec/specs-go"
 	selinux "github.com/opencontainers/selinux/go-selinux"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 
@@ -187,7 +189,21 @@ func (c *criService) CreateContainer(ctx context.Context, r *runtime.CreateConta
 
 	log.G(ctx).Infof("Container %q spec: %#+v", id, spew.NewFormatter(spec))
 
-	snapshotterOpt := snapshots.WithLabels(snapshots.FilterInheritedLabels(config.Annotations))
+	var snapshotterOpts []snapshots.Opt
+	snapshotterOpts = append(snapshotterOpts, snapshots.WithLabels(snapshots.FilterInheritedLabels(config.Annotations)))
+	snapshotterOpts = append(snapshotterOpts, snapshots.WithLabels(snapshots.FilterInheritedLabels(sandboxConfig.Annotations)))
+
+	// TODO(Chaofeng): Very hack move, should be reverted in the future and ask pod to use pod annotation instead
+	if sandboxConfig != nil && sandboxConfig.Metadata != nil {
+		metaJSON, err := json.Marshal(sandboxConfig.Metadata)
+		if err != nil {
+			logrus.Warnf("marshal sandbox config meta error, %v", err)
+		} else {
+			snapshotterOpts = append(snapshotterOpts, snapshots.WithLabels(map[string]string{
+				"PodSandboxMetadata": string(metaJSON),
+			}))
+		}
+	}
 	snapshotter, err := c.getSandboxSnapshotter(ctx, sandboxConfig, ociRuntime)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create container since no snapshotter specified anywhere: %w", err)
@@ -200,7 +216,7 @@ func (c *criService) CreateContainer(ctx context.Context, r *runtime.CreateConta
 		// the runtime (runc) a chance to modify (e.g. to create mount
 		// points corresponding to spec.Mounts) before making the
 		// rootfs readonly (requested by spec.Root.Readonly).
-		customopts.WithNewSnapshot(id, containerdImage, snapshotterOpt),
+		customopts.WithNewSnapshot(id, containerdImage, snapshotterOpts...),
 	}
 	mountMap := make(map[string]string)
 	if len(volumeMounts) > 0 {

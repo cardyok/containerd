@@ -22,58 +22,129 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/pelletier/go-toml"
+	"golang.org/x/net/http/httpproxy"
+
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/remotes/docker"
-	"github.com/pelletier/go-toml"
 )
 
 // UpdateClientFunc is a function that lets you to amend http Client behavior used by registry clients.
 type UpdateClientFunc func(client *http.Client) error
 
+type TransportConfig struct {
+	DialerTimeout           time.Duration `toml:"dialer_timeout"`
+	DialerKeepAlive         time.Duration `toml:"dialer_keepalive"`
+	DialerFallbackDelay     time.Duration `toml:"dialer_fallback_delay"`
+	MaxIdleConns            int           `toml:"max_idle_conns"`
+	IdleConnTimeout         time.Duration `toml:"idle_conn_timeout"`
+	TlsHandshakeTimeout     time.Duration `toml:"tls_handshake_timeout"`
+	ExpectedContinueTimeout time.Duration `toml:"expected_continue_timeout"`
+}
+
 type hostConfig struct {
-	scheme string
-	host   string
-	path   string
+	Scheme   string `toml:"scheme"`
+	Host     string `toml:"host"`
+	Path     string `toml:"path"`
+	HostName string `toml:"host_name"`
 
-	capabilities docker.HostCapabilities
+	Capabilities docker.HostCapabilities `toml:"capabilities"`
+	Header       http.Header             `toml:"header"`
 
-	caCerts     []string
-	clientPairs [][2]string
-	skipVerify  *bool
+	Transport          TransportConfig   `toml:"transport_config"`
+	HTTPProxy          string            `toml:"http_proxy"`
+	HTTPHeaderConvert  map[string]string `toml:"http_header_convert"`
+	HTTPSProxy         string            `toml:"https_proxy"`
+	HTTPSHeaderConvert map[string]string `toml:"https_header_convert"`
 
-	header http.Header
-
+	CaCerts     []string    `toml:"ca_certs"`
+	ClientPairs [][2]string `toml:"root"`
+	SkipVerify  *bool       `toml:"skip_verify"`
+	// TODO: API ("docker" or "oci")
+	// TODO: API Version ("v1", "v2")
 	// TODO: Add credential configuration (domain alias, username)
+}
+
+func defaultTransportConfig() TransportConfig {
+	return TransportConfig{
+		DialerTimeout:           30 * time.Second,
+		DialerKeepAlive:         30 * time.Second,
+		DialerFallbackDelay:     300 * time.Millisecond,
+		MaxIdleConns:            10,
+		IdleConnTimeout:         30 * time.Second,
+		TlsHandshakeTimeout:     10 * time.Second,
+		ExpectedContinueTimeout: 5 * time.Second,
+	}
+}
+
+func defaultHostConfig(hostPath string, defaultScheme string) hostConfig {
+	var host hostConfig
+	if hostPath == "docker.io" {
+		host.Scheme = "https"
+		host.Host = "registry-1.docker.io"
+	} else if docker.IsLocalhost(hostPath) {
+		host.Host = hostPath
+		if defaultScheme == "" || defaultScheme == "http" {
+			host.Scheme = "http"
+			// Skipping TLS verification for localhost
+			var skipVerify = true
+			host.SkipVerify = &skipVerify
+		} else {
+			host.Scheme = defaultScheme
+		}
+	} else {
+		host.Host = hostPath
+		if defaultScheme != "" {
+			host.Scheme = defaultScheme
+		} else {
+			host.Scheme = "https"
+		}
+	}
+	host.Path = "/v2"
+	host.Capabilities = docker.HostCapabilityPull | docker.HostCapabilityResolve | docker.HostCapabilityPush
+
+	host.Transport = defaultTransportConfig()
+	host.HostName = "direct"
+	return host
 }
 
 // HostOptions is used to configure registry hosts
 type HostOptions struct {
 	HostDir       func(string) (string, error)
+	ProxyHostDir  string
 	Credentials   func(host string) (string, string, error)
 	DefaultTLS    *tls.Config
 	DefaultScheme string
 	// UpdateClient will be called after creating http.Client object, so clients can provide extra configuration
 	UpdateClient   UpdateClientFunc
 	AuthorizerOpts []docker.AuthorizerOpt
+	HostPolicies   []HostPolicy
+}
+
+type HostPolicy struct {
+	MatchExp string `json:"match_exp"`
+	HostName string `json:"host_name"`
 }
 
 // ConfigureHosts creates a registry hosts function from the provided
 // host creation options. The host directory can read hosts.toml or
 // certificate files laid out in the Docker specific layout.
 // If a `HostDir` function is not required, defaults are used.
-func ConfigureHosts(ctx context.Context, options HostOptions) docker.RegistryHosts {
-	return func(host string) ([]docker.RegistryHost, error) {
+func ConfigureHosts(ctx context.Context, options HostOptions, ref string, annotations map[string]string) docker.RegistryHosts {
+	return func(host string, transportOpts ...docker.TransportOpt) ([]docker.RegistryHost, error) {
 		var hosts []hostConfig
 		if options.HostDir != nil {
 			dir, err := options.HostDir(host)
@@ -89,92 +160,115 @@ func ConfigureHosts(ctx context.Context, options HostOptions) docker.RegistryHos
 			}
 		}
 
-		// If hosts was not set, add a default host
-		// NOTE: Check nil here and not empty, the host may be
-		// intentionally configured to not have any endpoints
-		if hosts == nil {
-			hosts = make([]hostConfig, 1)
+		if options.ProxyHostDir != "" {
+			if proxyHosts, err := loadProxyDir(options.ProxyHostDir, host, options.DefaultScheme); err == nil {
+				hosts = append(hosts, proxyHosts...)
+			} else if !os.IsNotExist(err) {
+				return nil, fmt.Errorf("failed to parse proxy config file for %s :%w", host, err)
+			}
 		}
-		if len(hosts) > 0 && hosts[len(hosts)-1].host == "" {
-			if host == "docker.io" {
-				hosts[len(hosts)-1].scheme = "https"
-				hosts[len(hosts)-1].host = "registry-1.docker.io"
-			} else if docker.IsLocalhost(host) {
-				hosts[len(hosts)-1].host = host
-				if options.DefaultScheme == "" || options.DefaultScheme == "http" {
-					hosts[len(hosts)-1].scheme = "http"
 
-					// Skipping TLS verification for localhost
-					var skipVerify = true
-					hosts[len(hosts)-1].skipVerify = &skipVerify
-				} else {
-					hosts[len(hosts)-1].scheme = options.DefaultScheme
-				}
+		hosts = append(hosts, defaultHostConfig(host, options.DefaultScheme))
+
+		if len(options.HostPolicies) != 0 {
+			if ref != "" {
+				hosts = reorderHosts(ctx, ref, hosts, options.HostPolicies)
 			} else {
-				hosts[len(hosts)-1].host = host
-				if options.DefaultScheme != "" {
-					hosts[len(hosts)-1].scheme = options.DefaultScheme
-				} else {
-					hosts[len(hosts)-1].scheme = "https"
-				}
-			}
-			hosts[len(hosts)-1].path = "/v2"
-			hosts[len(hosts)-1].capabilities = docker.HostCapabilityPull | docker.HostCapabilityResolve | docker.HostCapabilityPush
-		}
-
-		var defaultTLSConfig *tls.Config
-		if options.DefaultTLS != nil {
-			defaultTLSConfig = options.DefaultTLS
-		} else {
-			defaultTLSConfig = &tls.Config{}
-		}
-
-		defaultTransport := &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
-			DialContext: (&net.Dialer{
-				Timeout:       30 * time.Second,
-				KeepAlive:     30 * time.Second,
-				FallbackDelay: 300 * time.Millisecond,
-			}).DialContext,
-			MaxIdleConns:          10,
-			IdleConnTimeout:       30 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			TLSClientConfig:       defaultTLSConfig,
-			ExpectContinueTimeout: 5 * time.Second,
-		}
-
-		client := &http.Client{
-			Transport: defaultTransport,
-		}
-		if options.UpdateClient != nil {
-			if err := options.UpdateClient(client); err != nil {
-				return nil, err
+				hosts = reorderHosts(ctx, host, hosts, options.HostPolicies)
 			}
 		}
-
-		authOpts := []docker.AuthorizerOpt{docker.WithAuthClient(client)}
-		if options.Credentials != nil {
-			authOpts = append(authOpts, docker.WithAuthCreds(options.Credentials))
-		}
-		authOpts = append(authOpts, options.AuthorizerOpts...)
-		authorizer := docker.NewDockerAuthorizer(authOpts...)
 
 		rhosts := make([]docker.RegistryHost, len(hosts))
 		for i, host := range hosts {
+			var defaultTLSConfig *tls.Config
+			if options.DefaultTLS != nil {
+				defaultTLSConfig = options.DefaultTLS
+			} else {
+				defaultTLSConfig = &tls.Config{}
+			}
 
-			rhosts[i].Scheme = host.scheme
-			rhosts[i].Host = host.host
-			rhosts[i].Path = host.path
-			rhosts[i].Capabilities = host.capabilities
-			rhosts[i].Header = host.header
+			cfg := httpproxy.FromEnvironment()
+			if host.HTTPProxy != "" {
+				cfg.HTTPProxy = host.HTTPProxy
+			}
+			if host.HTTPSProxy != "" {
+				cfg.HTTPSProxy = host.HTTPSProxy
+			}
+			rhosts[i].HostName = host.HostName
+			defaultTransport := &http.Transport{
+				Proxy: func(req *http.Request) (*url.URL, error) {
+					return cfg.ProxyFunc()(req.URL)
+				},
+				DialContext: (&net.Dialer{
+					Timeout:       host.Transport.DialerTimeout,
+					KeepAlive:     host.Transport.DialerKeepAlive,
+					FallbackDelay: host.Transport.DialerFallbackDelay,
+				}).DialContext,
+				MaxIdleConns:          host.Transport.MaxIdleConns,
+				IdleConnTimeout:       host.Transport.IdleConnTimeout,
+				TLSHandshakeTimeout:   host.Transport.TlsHandshakeTimeout,
+				TLSClientConfig:       defaultTLSConfig,
+				ExpectContinueTimeout: host.Transport.ExpectedContinueTimeout,
+			}
 
-			if host.caCerts != nil || host.clientPairs != nil || host.skipVerify != nil {
+			for _, o := range transportOpts {
+				if err := o(host.Host, defaultTransport); err != nil {
+					return nil, err
+				}
+			}
+
+			client := &http.Client{
+				Transport: defaultTransport,
+			}
+			if options.UpdateClient != nil {
+				if err := options.UpdateClient(client); err != nil {
+					return nil, err
+				}
+			}
+
+			authOpts := []docker.AuthorizerOpt{docker.WithAuthClient(client)}
+			if options.Credentials != nil {
+				authOpts = append(authOpts, docker.WithAuthCreds(options.Credentials))
+			}
+			authorizer := docker.NewDockerAuthorizer(authOpts...)
+
+			rhosts[i].Scheme = host.Scheme
+			rhosts[i].Host = host.Host
+			rhosts[i].Path = host.Path
+			rhosts[i].Capabilities = host.Capabilities
+			rhosts[i].Header = host.Header
+			if host.HTTPProxy != "" {
+				if rhosts[i].Header == nil {
+					rhosts[i].Header = http.Header{}
+				}
+				for key, values := range defaultTransport.ProxyConnectHeader {
+					rhosts[i].Header[key] = values
+				}
+			}
+
+			if annotations != nil {
+				for oldKey, newKey := range host.HTTPSHeaderConvert {
+					if v, ok := annotations[oldKey]; ok {
+						if defaultTransport.ProxyConnectHeader == nil {
+							defaultTransport.ProxyConnectHeader = http.Header{}
+						}
+						defaultTransport.ProxyConnectHeader.Set(newKey, v)
+					}
+				}
+				for oldKey, newKey := range host.HTTPHeaderConvert {
+					if v, ok := annotations[oldKey]; ok {
+						rhosts[i].Header[newKey] = []string{v}
+					}
+				}
+			}
+
+			if host.CaCerts != nil || host.ClientPairs != nil || host.SkipVerify != nil {
 				tr := defaultTransport.Clone()
 				tlsConfig := tr.TLSClientConfig
-				if host.skipVerify != nil {
-					tlsConfig.InsecureSkipVerify = *host.skipVerify
+				if host.SkipVerify != nil {
+					tlsConfig.InsecureSkipVerify = *host.SkipVerify
 				}
-				if host.caCerts != nil {
+				if host.CaCerts != nil {
 					if tlsConfig.RootCAs == nil {
 						rootPool, err := rootSystemPool()
 						if err != nil {
@@ -182,7 +276,7 @@ func ConfigureHosts(ctx context.Context, options HostOptions) docker.RegistryHos
 						}
 						tlsConfig.RootCAs = rootPool
 					}
-					for _, f := range host.caCerts {
+					for _, f := range host.CaCerts {
 						data, err := os.ReadFile(f)
 						if err != nil {
 							return nil, fmt.Errorf("unable to read CA cert %q: %w", f, err)
@@ -193,8 +287,8 @@ func ConfigureHosts(ctx context.Context, options HostOptions) docker.RegistryHos
 					}
 				}
 
-				if host.clientPairs != nil {
-					for _, pair := range host.clientPairs {
+				if host.ClientPairs != nil {
+					for _, pair := range host.ClientPairs {
 						certPEMBlock, err := os.ReadFile(pair[0])
 						if err != nil {
 							return nil, fmt.Errorf("unable to read CERT file %q: %w", pair[0], err)
@@ -237,6 +331,38 @@ func ConfigureHosts(ctx context.Context, options HostOptions) docker.RegistryHos
 		return rhosts, nil
 	}
 
+}
+
+func loadProxyDir(proxyDir string, hostPath string, scheme string) ([]hostConfig, error) {
+	var hostConfigs []hostConfig
+
+	if _, err := os.Stat(proxyDir); err != nil {
+		return nil, err
+	}
+
+	files, err := ioutil.ReadDir(proxyDir)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range files {
+		config := defaultHostConfig(hostPath, scheme)
+		if f.IsDir() {
+			continue
+		}
+		file, err := toml.LoadFile(filepath.Join(proxyDir, f.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("failed to load proxy file %s: %w", f.Name(), err)
+		}
+		if err := file.Unmarshal(&config); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal TOML %s: %w", f.Name(), err)
+		}
+		if config.HostName == "direct" {
+			realName := strings.Split(f.Name(), ".")
+			config.HostName = strings.Join(realName[:len(realName)-1], ".")
+		}
+		hostConfigs = append(hostConfigs, config)
+	}
+	return hostConfigs, nil
 }
 
 // HostDirFromRoot returns a function which finds a host directory
@@ -322,6 +448,16 @@ type hostFileConfig struct {
 	OverridePath bool `toml:"override_path"`
 
 	// TODO: Credentials: helper? name? username? alternate domain? token?
+	Transport TransportConfig `toml:"transport_config"`
+
+	HTTPProxy          string            `toml:"http_proxy"`
+	HTTPHeaderConvert  map[string]string `toml:"http_header_convert"`
+	HTTPSProxy         string            `toml:"https_proxy"`
+	HTTPSHeaderConvert map[string]string `toml:"https_header_convert"`
+	HostName           string            `toml:"host_name"`
+	// API (default: "docker")
+	// API Version (default: "v2")
+	// Credentials: helper? name? username? alternate domain? token?
 }
 
 func parseHostsFile(baseDir string, b []byte) ([]hostConfig, error) {
@@ -364,6 +500,9 @@ func parseHostsFile(baseDir string, b []byte) ([]hostConfig, error) {
 		if err != nil {
 			return nil, err
 		}
+		if parsed.HostName == "" {
+			parsed.HostName = filepath.Base(baseDir)
+		}
 		hosts = append(hosts, parsed)
 	}
 
@@ -372,6 +511,9 @@ func parseHostsFile(baseDir string, b []byte) ([]hostConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	if parsed.HostName == "" {
+		parsed.HostName = filepath.Base(baseDir)
+	}
 	hosts = append(hosts, parsed)
 
 	return hosts, nil
@@ -379,7 +521,7 @@ func parseHostsFile(baseDir string, b []byte) ([]hostConfig, error) {
 
 func parseHostConfig(server string, baseDir string, config hostFileConfig) (hostConfig, error) {
 	var (
-		result = hostConfig{}
+		result = defaultHostConfig("", "")
 		err    error
 	)
 
@@ -391,8 +533,8 @@ func parseHostConfig(server string, baseDir string, config hostFileConfig) (host
 		if err != nil {
 			return hostConfig{}, fmt.Errorf("unable to parse server %v: %w", server, err)
 		}
-		result.scheme = u.Scheme
-		result.host = u.Host
+		result.Scheme = u.Scheme
+		result.Host = u.Host
 		if len(u.Path) > 0 {
 			u.Path = path.Clean(u.Path)
 			if !strings.HasSuffix(u.Path, "/v2") && !config.OverridePath {
@@ -401,34 +543,68 @@ func parseHostConfig(server string, baseDir string, config hostFileConfig) (host
 		} else if !config.OverridePath {
 			u.Path = "/v2"
 		}
-		result.path = u.Path
+		result.Path = u.Path
 	}
 
-	result.skipVerify = config.SkipVerify
+	result.HTTPProxy = config.HTTPProxy
+	result.HTTPSProxy = config.HTTPSProxy
+	result.SkipVerify = config.SkipVerify
+	result.HostName = config.HostName
 
+	for k, v := range config.HTTPHeaderConvert {
+		result.HTTPHeaderConvert[k] = v
+	}
+
+	for k, v := range config.HTTPSHeaderConvert {
+		result.HTTPSHeaderConvert[k] = v
+	}
+
+	if config.Transport.DialerTimeout != 0 {
+		result.Transport.DialerTimeout = config.Transport.DialerTimeout
+	}
+	if config.Transport.DialerKeepAlive != 0 {
+		result.Transport.DialerKeepAlive = config.Transport.DialerKeepAlive
+	}
+	if config.Transport.DialerFallbackDelay != 0 {
+		result.Transport.DialerFallbackDelay = config.Transport.DialerFallbackDelay
+	}
+	if config.Transport.MaxIdleConns != 0 {
+		result.Transport.MaxIdleConns = config.Transport.MaxIdleConns
+	}
+	if config.Transport.IdleConnTimeout != 0 {
+		result.Transport.IdleConnTimeout = config.Transport.IdleConnTimeout
+	}
+	if config.Transport.TlsHandshakeTimeout != 0 {
+		result.Transport.TlsHandshakeTimeout = config.Transport.TlsHandshakeTimeout
+	}
+	if config.Transport.ExpectedContinueTimeout != 0 {
+		result.Transport.ExpectedContinueTimeout = config.Transport.ExpectedContinueTimeout
+	}
+
+	result.Capabilities = 0
 	if len(config.Capabilities) > 0 {
 		for _, c := range config.Capabilities {
 			switch strings.ToLower(c) {
 			case "pull":
-				result.capabilities |= docker.HostCapabilityPull
+				result.Capabilities |= docker.HostCapabilityPull
 			case "resolve":
-				result.capabilities |= docker.HostCapabilityResolve
+				result.Capabilities |= docker.HostCapabilityResolve
 			case "push":
-				result.capabilities |= docker.HostCapabilityPush
+				result.Capabilities |= docker.HostCapabilityPush
 			default:
 				return hostConfig{}, fmt.Errorf("unknown capability %v", c)
 			}
 		}
 	} else {
-		result.capabilities = docker.HostCapabilityPull | docker.HostCapabilityResolve | docker.HostCapabilityPush
+		result.Capabilities = docker.HostCapabilityPull | docker.HostCapabilityResolve | docker.HostCapabilityPush
 	}
 
 	if config.CACert != nil {
 		switch cert := config.CACert.(type) {
 		case string:
-			result.caCerts = []string{makeAbsPath(cert, baseDir)}
+			result.CaCerts = []string{makeAbsPath(cert, baseDir)}
 		case []interface{}:
-			result.caCerts, err = makeStringSlice(cert, func(p string) string {
+			result.CaCerts, err = makeStringSlice(cert, func(p string) string {
 				return makeAbsPath(p, baseDir)
 			})
 			if err != nil {
@@ -442,13 +618,13 @@ func parseHostConfig(server string, baseDir string, config hostFileConfig) (host
 	if config.Client != nil {
 		switch client := config.Client.(type) {
 		case string:
-			result.clientPairs = [][2]string{{makeAbsPath(client, baseDir), ""}}
+			result.ClientPairs = [][2]string{{makeAbsPath(client, baseDir), ""}}
 		case []interface{}:
 			// []string or [][2]string
 			for _, pairs := range client {
 				switch p := pairs.(type) {
 				case string:
-					result.clientPairs = append(result.clientPairs, [2]string{makeAbsPath(p, baseDir), ""})
+					result.ClientPairs = append(result.ClientPairs, [2]string{makeAbsPath(p, baseDir), ""})
 				case []interface{}:
 					slice, err := makeStringSlice(p, func(s string) string {
 						return makeAbsPath(s, baseDir)
@@ -462,7 +638,7 @@ func parseHostConfig(server string, baseDir string, config hostFileConfig) (host
 
 					var pair [2]string
 					copy(pair[:], slice)
-					result.clientPairs = append(result.clientPairs, pair)
+					result.ClientPairs = append(result.ClientPairs, pair)
 				default:
 					return hostConfig{}, fmt.Errorf("invalid type %T for \"client\"", p)
 				}
@@ -487,7 +663,7 @@ func parseHostConfig(server string, baseDir string, config hostFileConfig) (host
 				return hostConfig{}, fmt.Errorf("invalid type %v for header %q", ty, key)
 			}
 		}
-		result.header = header
+		result.Header = header
 	}
 
 	return result, nil
@@ -559,7 +735,7 @@ func loadCertFiles(ctx context.Context, certsDir string) ([]hostConfig, error) {
 			continue
 		}
 		if strings.HasSuffix(f.Name(), ".crt") {
-			hosts[0].caCerts = append(hosts[0].caCerts, filepath.Join(certsDir, f.Name()))
+			hosts[0].CaCerts = append(hosts[0].CaCerts, filepath.Join(certsDir, f.Name()))
 		}
 		if strings.HasSuffix(f.Name(), ".cert") {
 			var pair [2]string
@@ -572,8 +748,32 @@ func loadCertFiles(ctx context.Context, certsDir string) ([]hostConfig, error) {
 			} else if !os.IsNotExist(err) {
 				return nil, err
 			}
-			hosts[0].clientPairs = append(hosts[0].clientPairs, pair)
+			hosts[0].ClientPairs = append(hosts[0].ClientPairs, pair)
 		}
 	}
 	return hosts, nil
+}
+
+func reorderHosts(ctx context.Context, host string, original []hostConfig, policies []HostPolicy) []hostConfig {
+	for _, policy := range policies {
+		r, err := regexp.Compile(policy.MatchExp)
+		if err != nil {
+			log.G(ctx).Errorf("error compiling policy %v regexp %v err: %v", policy.HostName, policy.MatchExp, err)
+			continue
+		}
+		if r.MatchString(host) {
+			return elevateHosts(original, policy.HostName)
+		}
+	}
+	return original
+}
+
+func elevateHosts(original []hostConfig, hostName string) []hostConfig {
+	for i, host := range original {
+		if host.HostName == hostName {
+			target := []hostConfig{original[i]}
+			return append(target, append(original[:i], original[i+1:]...)...)
+		}
+	}
+	return original
 }

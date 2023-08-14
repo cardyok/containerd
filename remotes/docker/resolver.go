@@ -18,7 +18,6 @@ package docker
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -27,6 +26,12 @@ import (
 	"path"
 	"strings"
 
+	digest "github.com/opencontainers/go-digest"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
+	"golang.org/x/net/context/ctxhttp"
+
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/images"
 	"github.com/containerd/containerd/log"
@@ -34,10 +39,6 @@ import (
 	"github.com/containerd/containerd/remotes"
 	"github.com/containerd/containerd/remotes/docker/schema1"
 	"github.com/containerd/containerd/version"
-	digest "github.com/opencontainers/go-digest"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/sirupsen/logrus"
-	"golang.org/x/net/context/ctxhttp"
 )
 
 var (
@@ -120,6 +121,9 @@ type ResolverOptions struct {
 	//
 	// Deprecated: use Hosts.
 	Client *http.Client
+
+	// TransportOpts handles options to transport client
+	TransportOpts []TransportOpt
 }
 
 // DefaultHost is the default host function.
@@ -132,9 +136,11 @@ func DefaultHost(ns string) (string, error) {
 
 type dockerResolver struct {
 	hosts         RegistryHosts
+	invalidHosts  []int
 	header        http.Header
 	resolveHeader http.Header
 	tracker       StatusTracker
+	transportOpt  []TransportOpt
 }
 
 // NewResolver returns a new resolver to a Docker registry
@@ -195,6 +201,7 @@ func NewResolver(options ResolverOptions) remotes.Resolver {
 		header:        options.Headers,
 		resolveHeader: resolveHeader,
 		tracker:       options.Tracker,
+		transportOpt:  options.TransportOpts,
 	}
 }
 
@@ -237,7 +244,7 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (string, ocisp
 	}
 
 	var (
-		firstErr error
+		hostErrs []error
 		paths    [][]string
 		dgst     = refspec.Digest()
 		caps     = HostCapabilityPull
@@ -272,12 +279,14 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (string, ocisp
 	}
 
 	for _, u := range paths {
-		for _, host := range hosts {
+		for i, host := range hosts {
 			ctx := log.WithLogger(ctx, log.G(ctx).WithField("host", host.Host))
+			ctx = log.WithLogger(ctx, log.G(ctx).WithField("hostName", host.HostName))
 
 			req := base.request(host, http.MethodHead, u...)
 			if err := req.addNamespace(base.refspec.Hostname()); err != nil {
-				return "", ocispec.Descriptor{}, err
+				hostErrs = append(hostErrs, errors.Wrapf(err, host.HostName))
+				return "", ocispec.Descriptor{}, errorParse(hostErrs)
 			}
 
 			for key, value := range r.resolveHeader {
@@ -290,11 +299,10 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (string, ocisp
 				if errors.Is(err, ErrInvalidAuthorization) {
 					err = fmt.Errorf("pull access denied, repository does not exist or may require authorization: %w", err)
 				}
-				// Store the error for referencing later
-				if firstErr == nil {
-					firstErr = err
-				}
+
+				hostErrs = append(hostErrs, errors.Wrapf(err, host.HostName))
 				log.G(ctx).WithError(err).Info("trying next host")
+				r.invalidHosts = append(r.invalidHosts, i)
 				continue // try another host
 			}
 			resp.Body.Close() // don't care about body contents.
@@ -302,16 +310,18 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (string, ocisp
 			if resp.StatusCode > 299 {
 				if resp.StatusCode == http.StatusNotFound {
 					log.G(ctx).Info("trying next host - response was http.StatusNotFound")
+					hostErrs = append(hostErrs, errors.Errorf("%s: %s", resp.Status, host.HostName))
+					r.invalidHosts = append(r.invalidHosts, i)
 					continue
 				}
 				if resp.StatusCode > 399 {
-					// Set firstErr when encountering the first non-404 status code.
-					if firstErr == nil {
-						firstErr = fmt.Errorf("pulling from host %s failed with status code %v: %v", host.Host, u, resp.Status)
-					}
+					log.G(ctx).Infof("trying next host - response was %v", resp.StatusCode)
+					hostErrs = append(hostErrs, errors.Errorf("%s: %s", resp.Status, host.HostName))
+					r.invalidHosts = append(r.invalidHosts, i)
 					continue // try another host
 				}
-				return "", ocispec.Descriptor{}, fmt.Errorf("pulling from host %s failed with unexpected status code %v: %v", host.Host, u, resp.Status)
+				hostErrs = append(hostErrs, errors.Wrapf(errors.Errorf("failed with unexpected status code %v: %v", u, resp.Status), host.HostName))
+				return "", ocispec.Descriptor{}, errorParse(hostErrs)
 			}
 			size := resp.ContentLength
 			contentType := getManifestMediaType(resp)
@@ -327,7 +337,8 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (string, ocisp
 
 				if dgstHeader != "" && size != -1 {
 					if err := dgstHeader.Validate(); err != nil {
-						return "", ocispec.Descriptor{}, fmt.Errorf("%q in header not a valid digest: %w", dgstHeader, err)
+						hostErrs = append(hostErrs, errors.Wrapf(errors.Wrapf(err, "%q in header not a valid digest", dgstHeader), host.HostName))
+						return "", ocispec.Descriptor{}, errorParse(hostErrs)
 					}
 					dgst = dgstHeader
 				}
@@ -337,7 +348,8 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (string, ocisp
 
 				req = base.request(host, http.MethodGet, u...)
 				if err := req.addNamespace(base.refspec.Hostname()); err != nil {
-					return "", ocispec.Descriptor{}, err
+					hostErrs = append(hostErrs, errors.Wrapf(err, host.HostName))
+					return "", ocispec.Descriptor{}, errorParse(hostErrs)
 				}
 
 				for key, value := range r.resolveHeader {
@@ -346,7 +358,8 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (string, ocisp
 
 				resp, err := req.doWithRetries(ctx, nil)
 				if err != nil {
-					return "", ocispec.Descriptor{}, err
+					hostErrs = append(hostErrs, errors.Wrapf(err, host.HostName))
+					return "", ocispec.Descriptor{}, errorParse(hostErrs)
 				}
 				defer resp.Body.Close()
 
@@ -357,26 +370,27 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (string, ocisp
 					if contentType == images.MediaTypeDockerSchema1Manifest {
 						b, err := schema1.ReadStripSignature(&bodyReader)
 						if err != nil {
-							return "", ocispec.Descriptor{}, err
+							hostErrs = append(hostErrs, errors.Wrapf(err, host.HostName))
+							return "", ocispec.Descriptor{}, errorParse(hostErrs)
 						}
 
 						dgst = digest.FromBytes(b)
 					} else {
 						dgst, err = digest.FromReader(&bodyReader)
 						if err != nil {
-							return "", ocispec.Descriptor{}, err
+							hostErrs = append(hostErrs, errors.Wrapf(err, host.HostName))
+							return "", ocispec.Descriptor{}, errorParse(hostErrs)
 						}
 					}
 				} else if _, err := io.Copy(io.Discard, &bodyReader); err != nil {
-					return "", ocispec.Descriptor{}, err
+					hostErrs = append(hostErrs, errors.Wrapf(err, host.HostName))
+					return "", ocispec.Descriptor{}, errorParse(hostErrs)
 				}
 				size = bodyReader.bytesRead
 			}
 			// Prevent resolving to excessively large manifests
 			if size > MaxManifestSize {
-				if firstErr == nil {
-					firstErr = fmt.Errorf("rejecting %d byte manifest for %s: %w", size, ref, errdefs.ErrNotFound)
-				}
+				hostErrs = append(hostErrs, errors.Wrapf(errdefs.ErrNotFound, "%s: rejecting %d byte manifest for %s", host.HostName, size, ref))
 				continue
 			}
 
@@ -386,20 +400,16 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (string, ocisp
 				Size:      size,
 			}
 
-			log.G(ctx).WithField("desc.digest", desc.Digest).Debug("resolved")
+			log.G(ctx).WithField("desc.digest", desc.Digest).Infof("resolved")
 			return ref, desc, nil
 		}
 	}
 
-	// If above loop terminates without return, then there was an error.
-	// "firstErr" contains the first non-404 error. That is, "firstErr == nil"
-	// means that either no registries were given or each registry returned 404.
-
-	if firstErr == nil {
-		firstErr = fmt.Errorf("%s: %w", ref, errdefs.ErrNotFound)
+	if len(hostErrs) == 0 {
+		return "", ocispec.Descriptor{}, fmt.Errorf("failed pulling ref: %w", errdefs.ErrNotFound)
 	}
 
-	return "", ocispec.Descriptor{}, firstErr
+	return "", ocispec.Descriptor{}, errorParse(hostErrs)
 }
 
 func (r *dockerResolver) Fetcher(ctx context.Context, ref string) (remotes.Fetcher, error) {
@@ -444,9 +454,15 @@ type dockerBase struct {
 
 func (r *dockerResolver) base(refspec reference.Spec) (*dockerBase, error) {
 	host := refspec.Hostname()
-	hosts, err := r.hosts(host)
+	allHosts, err := r.hosts(host, r.transportOpt...)
 	if err != nil {
 		return nil, err
+	}
+	var hosts []RegistryHost
+	for i, host := range allHosts {
+		if !checkIntSlice(r.invalidHosts, i) {
+			hosts = append(hosts, host)
+		}
 	}
 	return &dockerBase{
 		refspec:    refspec,
@@ -690,4 +706,23 @@ func IsLocalhost(host string) bool {
 
 	ip := net.ParseIP(host)
 	return ip.IsLoopback()
+}
+
+// checkIntSlice checks whether target exists in src slice.
+func checkIntSlice(src []int, target int) bool {
+	for _, i := range src {
+		if i == target {
+			return true
+		}
+	}
+	return false
+}
+
+func errorParse(errs []error) error {
+	ret := ""
+
+	for _, err := range errs {
+		ret += fmt.Sprintf("[%v]", err.Error())
+	}
+	return errors.New(ret)
 }

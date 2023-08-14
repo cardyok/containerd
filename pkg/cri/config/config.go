@@ -110,7 +110,11 @@ type ContainerdConfig struct {
 	// OverrideMountInfo turn on mtabl switch, when rw layer of containers are created, /etc/mtab is created as a
 	// symlink to /proc/mounts
 	// TODO(chaofeng): this feature should be removed in the future when all users have updated their df in container
-	OverrideMountInfo bool `toml:"mount_override" json:"mount_override"`
+	OverrideMountInfo bool `toml:"mount_override" json:"mountOverride"`
+
+	// PodProxyHeader is a boolean flag to specify whether to include pod related information to
+	// proxyHeader when using proxy to pull images
+	PodProxyHeader bool `toml:"pod_proxy_header" json:"podProxyHeader"`
 }
 
 // CniConfig contains toml config related to cni
@@ -195,6 +199,8 @@ type Registry struct {
 	Auths map[string]AuthConfig `toml:"auths" json:"auths"`
 	// Headers adds additional HTTP headers that get sent to all registries
 	Headers map[string][]string `toml:"headers" json:"headers"`
+	// ProxyHostDir is used to store proxy config files
+	ProxyHostDir string `toml:"proxy_host_dir" json:"proxyHostDir"`
 }
 
 // RegistryConfig contains configuration used to communicate with the registry.

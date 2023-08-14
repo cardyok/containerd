@@ -23,6 +23,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/containerd/typeurl"
+	runtimespec "github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/sirupsen/logrus"
+
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/containers"
 	"github.com/containerd/containerd/errdefs"
@@ -36,9 +40,6 @@ import (
 	"github.com/containerd/containerd/reference/docker"
 	"github.com/containerd/containerd/runtime/linux/runctypes"
 	runcoptions "github.com/containerd/containerd/runtime/v2/runc/options"
-	"github.com/containerd/typeurl"
-	runtimespec "github.com/opencontainers/runtime-spec/specs-go"
-	"github.com/sirupsen/logrus"
 
 	runhcsoptions "github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
 	imagedigest "github.com/opencontainers/go-digest"
@@ -78,6 +79,14 @@ const (
 	containerKindSandbox = "sandbox"
 	// containerKindContainer is a label value indicating container is application container
 	containerKindContainer = "container"
+	// imageLabelKey is the label key indicating the image is managed by cri plugin.
+	imageLabelKey = criContainerdPrefix + ".image"
+	// imageLabelValue is the label value indicating the image is managed by cri plugin.
+	imageLabelValue = "managed"
+	// imageLabelHosts is the label value indicating the hosts used for image pulling.
+	imageLabelHosts = imageLabelKey + ".hosts"
+	// imageLabelHostsPolicy is the label value indicating the policy for selecting which host to use.
+	imageLabelHostsPolicy = imageLabelHosts + ".policy"
 	// sandboxMetadataExtension is an extension name that identify metadata of sandbox in CreateContainerRequest
 	sandboxMetadataExtension = criContainerdPrefix + ".sandbox.metadata"
 	// containerMetadataExtension is an extension name that identify metadata of container in CreateContainerRequest
@@ -94,6 +103,11 @@ const (
 	// interfaceIPsAnnotationKey is used as the key in sandbox config annotations,
 	// the value is the serialized string of interface:ipArray map.
 	interfaceIPsAnnotationKey = alibabaCloud + "/interface-ips"
+
+	// aliyunKubernetes is default prefix for aliyun annotations
+	aliyunKubernetes = "k8s.aliyun.com/"
+	// insecureRegistry is the annotation for specifying self-signed registries
+	insecureRegistry = aliyunKubernetes + "insecure-registry"
 )
 
 // makeSandboxName generates sandbox name from sandbox metadata. The name

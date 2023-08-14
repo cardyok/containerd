@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -102,10 +103,59 @@ func (c *criService) PullImage(ctx context.Context, r *runtime.PullImageRequest)
 	if ref != imageRef {
 		log.G(ctx).Debugf("PullImage using normalized image ref: %q", ref)
 	}
+
+	var transportOpts []docker.TransportOpt
+	sandboxConfig := r.GetSandboxConfig()
+
+	if c.config.ContainerdConfig.PodProxyHeader {
+		transportOpts = append(transportOpts, func(host string, transport *http.Transport) error {
+			if transport.ProxyConnectHeader == nil {
+				transport.ProxyConnectHeader = http.Header{}
+			}
+			transport.ProxyConnectHeader.Set("X-Image-Registry", host)
+			if sandboxConfig != nil && sandboxConfig.Metadata != nil {
+				metaJSON, err := json.Marshal(sandboxConfig.Metadata)
+				if err != nil {
+					log.G(ctx).Warnf("marshal pouch config meta error %v, %v", sandboxConfig.Metadata, err)
+				} else {
+					transport.ProxyConnectHeader.Set("CRI-PodSandboxMetadata", string(metaJSON))
+				}
+			}
+			return nil
+		})
+	}
+
+	if sandboxConfig != nil {
+		if val, ok := sandboxConfig.Annotations[insecureRegistry]; ok {
+			skipMap := make(map[string]bool)
+			for _, skipHost := range strings.Split(val, ",") {
+				skipHost = strings.TrimSpace(skipHost)
+				skipMap[skipHost] = true
+			}
+			log.G(ctx).Infof("PullImage for %q with skipVerify hosts: %v", imageRef, skipMap)
+			transportOpts = append(transportOpts, func(host string, transport *http.Transport) error {
+				if _, ok := skipMap[host]; ok {
+					transport.TLSClientConfig.InsecureSkipVerify = true
+				}
+				return nil
+			})
+		}
+	}
+
+	var hostConfig string
+	if sandboxConfig != nil {
+		hostConfig = sandboxConfig.Annotations[imageLabelHostsPolicy]
+	}
+	var hostAnnotations map[string]string
+	if sandboxConfig != nil {
+		hostAnnotations = sandboxConfig.Annotations
+	}
+
 	var (
 		resolver = docker.NewResolver(docker.ResolverOptions{
-			Headers: c.config.Registry.Headers,
-			Hosts:   c.registryHosts(ctx, r.GetAuth()),
+			Headers:       c.config.Registry.Headers,
+			Hosts:         c.registryHosts(ctx, r.GetAuth(), hostConfig, ref, hostAnnotations),
+			TransportOpts: transportOpts,
 		})
 		isSchema1    bool
 		imageHandler containerdimages.HandlerFunc = func(_ context.Context,
@@ -121,7 +171,7 @@ func (c *criService) PullImage(ctx context.Context, r *runtime.PullImageRequest)
 
 	//TODO(Chaofeng): very hack method, need to figure out a more elegant way
 	snapshotter := c.config.ContainerdConfig.Snapshotter
-	if sandboxConfig := r.GetSandboxConfig(); sandboxConfig != nil {
+	if sandboxConfig != nil {
 		snapshotResult, err := c.getSnapshotterFromSandbox(ctx, sandboxConfig)
 		if err == nil {
 			snapshotter = snapshotResult
@@ -367,9 +417,9 @@ func hostDirFromRoots(roots []string) func(string) (string, error) {
 }
 
 // registryHosts is the registry hosts to be used by the resolver.
-func (c *criService) registryHosts(ctx context.Context, auth *runtime.AuthConfig) docker.RegistryHosts {
+func (c *criService) registryHosts(ctx context.Context, auth *runtime.AuthConfig, hostConfig string, ref string, annotations map[string]string) docker.RegistryHosts {
 	paths := filepath.SplitList(c.config.Registry.ConfigPath)
-	if len(paths) > 0 {
+	if len(paths) > 0 || c.config.Registry.ProxyHostDir != "" {
 		hostOptions := config.HostOptions{}
 		hostOptions.Credentials = func(host string) (string, string, error) {
 			hostauth := auth
@@ -382,11 +432,20 @@ func (c *criService) registryHosts(ctx context.Context, auth *runtime.AuthConfig
 			return ParseAuth(hostauth, host)
 		}
 		hostOptions.HostDir = hostDirFromRoots(paths)
-
-		return config.ConfigureHosts(ctx, hostOptions)
+		hostOptions.ProxyHostDir = c.config.Registry.ProxyHostDir
+		if hostConfig != "" {
+			var hostPolicies []config.HostPolicy
+			err := json.Unmarshal([]byte(hostConfig), &hostPolicies)
+			if err != nil {
+				log.G(ctx).Warnf("failed to parse image policy annotation: %v", err)
+			} else {
+				hostOptions.HostPolicies = hostPolicies
+			}
+		}
+		return config.ConfigureHosts(ctx, hostOptions, ref, annotations)
 	}
 
-	return func(host string) ([]docker.RegistryHost, error) {
+	return func(host string, transportOpts ...docker.TransportOpt) ([]docker.RegistryHost, error) {
 		var registries []docker.RegistryHost
 
 		endpoints, err := c.registryEndpoints(host)

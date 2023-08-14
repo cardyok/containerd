@@ -21,7 +21,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,11 +30,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/containerd/containerd/remotes"
-	"github.com/containerd/containerd/remotes/docker/auth"
 	digest "github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
+	"github.com/containerd/containerd/remotes"
+	"github.com/containerd/containerd/remotes/docker/auth"
 )
 
 func TestHTTPResolver(t *testing.T) {
@@ -236,7 +236,7 @@ func TestBadTokenResolver(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error getting token with inssufficient scope")
 	}
-	if !errors.Is(err, ErrInvalidAuthorization) {
+	if !strings.Contains(err.Error(), "authorization failed") {
 		t.Fatal(err)
 	}
 }
@@ -265,7 +265,7 @@ func TestHostFailureFallbackResolver(t *testing.T) {
 		notRunningBase := notRunning.Listener.Addr().String()
 
 		// Override hosts with two hosts
-		options.Hosts = func(host string) ([]RegistryHost, error) {
+		options.Hosts = func(host string, transportOpts ...TransportOpt) ([]RegistryHost, error) {
 			return []RegistryHost{
 				createHost(notRunningBase), // This host IS running, but with a non-responsive HTTP server
 				createHost(base),           // This host IS running
@@ -312,7 +312,7 @@ func TestHostTLSFailureFallbackResolver(t *testing.T) {
 		}
 
 		// Override hosts with two hosts
-		options.Hosts = func(host string) ([]RegistryHost, error) {
+		options.Hosts = func(host string, transportOpts ...TransportOpt) ([]RegistryHost, error) {
 			return []RegistryHost{
 				createHost(httpBase),  // This host is serving plain HTTP
 				createHost(httpsBase), // This host is serving TLS
@@ -353,7 +353,7 @@ func TestResolveProxy(t *testing.T) {
 	base, ro, close := tlsServer(logHandler{t, nr})
 	defer close()
 
-	ro.Hosts = func(host string) ([]RegistryHost, error) {
+	ro.Hosts = func(host string, transportOpts ...TransportOpt) ([]RegistryHost, error) {
 		return []RegistryHost{{
 			Client:       ro.Client,
 			Host:         base,
@@ -417,7 +417,7 @@ func TestResolveProxyFallback(t *testing.T) {
 	base := s.URL[7:] // strip "http://"
 
 	ro := ResolverOptions{
-		Hosts: func(host string) ([]RegistryHost, error) {
+		Hosts: func(host string, transportOpts ...TransportOpt) ([]RegistryHost, error) {
 			return []RegistryHost{
 				{
 					Host:         flipLocalhost(host),

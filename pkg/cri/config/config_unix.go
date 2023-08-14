@@ -20,9 +20,10 @@
 package config
 
 import (
+	"github.com/pelletier/go-toml"
+
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/pkg/cri/streaming"
-	"github.com/pelletier/go-toml"
 )
 
 // DefaultConfig returns default configurations of cri plugin.
@@ -80,6 +81,8 @@ func DefaultConfig() PluginConfig {
 				},
 			},
 			DisableSnapshotAnnotations: true,
+			PodProxyHeader:             false,
+			OverrideMountInfo:          false,
 		},
 		DisableTCPService:    true,
 		StreamServerAddress:  "127.0.0.1",

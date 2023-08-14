@@ -19,17 +19,18 @@ package docker
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/pkg/errors"
+
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/images"
 	"github.com/containerd/containerd/log"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 type dockerFetcher struct {
@@ -98,55 +99,47 @@ func (r dockerFetcher) Fetch(ctx context.Context, desc ocispec.Descriptor) (io.R
 			images.MediaTypeDockerSchema1Manifest,
 			ocispec.MediaTypeImageManifest, ocispec.MediaTypeImageIndex:
 
-			var firstErr error
+			var hostErrs []error
 			for _, host := range r.hosts {
+				ctx = log.WithLogger(ctx, log.G(ctx).WithField("hostName", host.HostName))
 				req := r.request(host, http.MethodGet, "manifests", desc.Digest.String())
 				if err := req.addNamespace(r.refspec.Hostname()); err != nil {
-					return nil, err
+					hostErrs = append(hostErrs, errors.Wrapf(err, host.HostName))
+					return nil, errorParse(hostErrs)
 				}
 
 				rc, err := r.open(ctx, req, desc.MediaType, offset)
 				if err != nil {
-					// Store the error for referencing later
-					if firstErr == nil {
-						firstErr = err
-					}
+					hostErrs = append(hostErrs, errors.Wrapf(err, host.HostName))
 					continue // try another host
 				}
 
 				return rc, nil
 			}
 
-			return nil, firstErr
+			return nil, errorParse(hostErrs)
 		}
 
 		// Finally use blobs endpoints
-		var firstErr error
+		var hostErrs []error
 		for _, host := range r.hosts {
+			ctx = log.WithLogger(ctx, log.G(ctx).WithField("hostName", host.HostName))
 			req := r.request(host, http.MethodGet, "blobs", desc.Digest.String())
 			if err := req.addNamespace(r.refspec.Hostname()); err != nil {
-				return nil, err
+				hostErrs = append(hostErrs, errors.Wrapf(err, host.HostName))
+				return nil, errorParse(hostErrs)
 			}
 
 			rc, err := r.open(ctx, req, desc.MediaType, offset)
 			if err != nil {
-				// Store the error for referencing later
-				if firstErr == nil {
-					firstErr = err
-				}
+				hostErrs = append(hostErrs, errors.Wrapf(err, host.HostName))
 				continue // try another host
 			}
 
 			return rc, nil
 		}
 
-		if errdefs.IsNotFound(firstErr) {
-			firstErr = fmt.Errorf("could not fetch content descriptor %v (%v) from remote: %w",
-				desc.Digest, desc.MediaType, errdefs.ErrNotFound,
-			)
-		}
-
-		return nil, firstErr
+		return nil, errorParse(hostErrs)
 
 	})
 }

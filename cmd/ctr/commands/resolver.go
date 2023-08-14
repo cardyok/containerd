@@ -31,11 +31,12 @@ import (
 	"strings"
 
 	"github.com/containerd/console"
+	"github.com/urfave/cli"
+
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/remotes"
 	"github.com/containerd/containerd/remotes/docker"
 	"github.com/containerd/containerd/remotes/docker/config"
-	"github.com/urfave/cli"
 )
 
 // PushTracker returns a new InMemoryTracker which tracks the ref status
@@ -111,7 +112,7 @@ func GetResolver(ctx gocontext.Context, clicontext *cli.Context) (remotes.Resolv
 		}
 	}
 
-	options.Hosts = config.ConfigureHosts(ctx, hostOptions)
+	options.Hosts = config.ConfigureHosts(ctx, hostOptions, "", nil)
 
 	return docker.NewResolver(options), nil
 }

@@ -74,6 +74,7 @@ type RegistryHost struct {
 	Path         string
 	Capabilities HostCapabilities
 	Header       http.Header
+	HostName     string
 }
 
 func (h RegistryHost) isProxy(refhost string) bool {
@@ -87,7 +88,10 @@ func (h RegistryHost) isProxy(refhost string) bool {
 
 // RegistryHosts fetches the registry hosts for a given namespace,
 // provided by the host component of an distribution image reference.
-type RegistryHosts func(string) ([]RegistryHost, error)
+type RegistryHosts func(string, ...TransportOpt) ([]RegistryHost, error)
+
+// TransportOpt updates the provided transport Client
+type TransportOpt func(string, *http.Transport) error
 
 // Registries joins multiple registry configuration functions, using the same
 // order as provided within the arguments. When an empty registry configuration
@@ -96,7 +100,7 @@ type RegistryHosts func(string) ([]RegistryHost, error)
 // configuration is returned from a configuration function, it will be returned
 // to the caller.
 func Registries(registries ...RegistryHosts) RegistryHosts {
-	return func(host string) ([]RegistryHost, error) {
+	return func(host string, opts ...TransportOpt) ([]RegistryHost, error) {
 		for _, registry := range registries {
 			config, err := registry(host)
 			if err != nil {
@@ -159,7 +163,7 @@ func ConfigureDefaultRegistries(ropts ...RegistryOpt) RegistryHosts {
 		opt(&opts)
 	}
 
-	return func(host string) ([]RegistryHost, error) {
+	return func(host string, transportOpts ...TransportOpt) ([]RegistryHost, error) {
 		config := RegistryHost{
 			Client:       opts.client,
 			Authorizer:   opts.authorizer,

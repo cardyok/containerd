@@ -33,7 +33,7 @@ const allCaps = docker.HostCapabilityPull | docker.HostCapabilityResolve | docke
 
 func TestDefaultHosts(t *testing.T) {
 	ctx := logtest.WithT(context.Background(), t)
-	resolve := ConfigureHosts(ctx, HostOptions{})
+	resolve := ConfigureHosts(ctx, HostOptions{}, "", nil)
 
 	for _, tc := range []struct {
 		host     string
@@ -114,75 +114,75 @@ ca = "/etc/path/default"
 	var tb, fb = true, false
 	expected := []hostConfig{
 		{
-			scheme:       "https",
-			host:         "mirror.registry",
-			path:         "/v2",
-			capabilities: docker.HostCapabilityPull,
-			caCerts:      []string{filepath.FromSlash("/etc/certs/mirror.pem")},
-			skipVerify:   &fb,
-			header:       http.Header{"x-custom-2": {"value1", "value2"}},
+			Scheme:       "https",
+			Host:         "mirror.registry",
+			Path:         "/v2",
+			Capabilities: docker.HostCapabilityPull,
+			CaCerts:      []string{filepath.FromSlash("/etc/certs/mirror.pem")},
+			SkipVerify:   &fb,
+			Header:       http.Header{"x-custom-2": {"value1", "value2"}},
 		},
 		{
-			scheme:       "https",
-			host:         "mirror-bak.registry",
-			path:         "/us/v2",
-			capabilities: docker.HostCapabilityPull,
-			skipVerify:   &tb,
+			Scheme:       "https",
+			Host:         "mirror-bak.registry",
+			Path:         "/us/v2",
+			Capabilities: docker.HostCapabilityPull,
+			SkipVerify:   &tb,
 		},
 		{
-			scheme:       "http",
-			host:         "mirror.registry",
-			path:         "/v2",
-			capabilities: docker.HostCapabilityPull,
+			Scheme:       "http",
+			Host:         "mirror.registry",
+			Path:         "/v2",
+			Capabilities: docker.HostCapabilityPull,
 		},
 		{
-			scheme:       "https",
-			host:         "test-1.registry",
-			path:         "/v2",
-			capabilities: allCaps,
-			caCerts:      []string{filepath.FromSlash("/etc/certs/test-1-ca.pem"), filepath.FromSlash("/etc/certs/special.pem")},
-			clientPairs: [][2]string{
+			Scheme:       "https",
+			Host:         "test-1.registry",
+			Path:         "/v2",
+			Capabilities: allCaps,
+			CaCerts:      []string{filepath.FromSlash("/etc/certs/test-1-ca.pem"), filepath.FromSlash("/etc/certs/special.pem")},
+			ClientPairs: [][2]string{
 				{filepath.FromSlash("/etc/certs/client.cert"), filepath.FromSlash("/etc/certs/client.key")},
 				{filepath.FromSlash("/etc/certs/client.pem"), ""},
 			},
 		},
 		{
-			scheme:       "https",
-			host:         "test-2.registry",
-			path:         "/v2",
-			capabilities: allCaps,
-			clientPairs: [][2]string{
+			Scheme:       "https",
+			Host:         "test-2.registry",
+			Path:         "/v2",
+			Capabilities: allCaps,
+			ClientPairs: [][2]string{
 				{filepath.FromSlash("/etc/certs/client.pem")},
 			},
 		},
 		{
-			scheme:       "https",
-			host:         "test-3.registry",
-			path:         "/v2",
-			capabilities: allCaps,
-			clientPairs: [][2]string{
+			Scheme:       "https",
+			Host:         "test-3.registry",
+			Path:         "/v2",
+			Capabilities: allCaps,
+			ClientPairs: [][2]string{
 				{filepath.FromSlash("/etc/certs/client-1.pem")},
 				{filepath.FromSlash("/etc/certs/client-2.pem")},
 			},
 		},
 		{
-			scheme:       "https",
-			host:         "noncompliantmirror.registry",
-			path:         "/v2/namespaceprefix",
-			capabilities: docker.HostCapabilityPull,
+			Scheme:       "https",
+			Host:         "noncompliantmirror.registry",
+			Path:         "/v2/namespaceprefix",
+			Capabilities: docker.HostCapabilityPull,
 		},
 		{
-			scheme:       "https",
-			host:         "noprefixnoncompliant.registry",
-			capabilities: allCaps,
+			Scheme:       "https",
+			Host:         "noprefixnoncompliant.registry",
+			Capabilities: allCaps,
 		},
 		{
-			scheme:       "https",
-			host:         "test-default.registry",
-			path:         "/v2",
-			capabilities: allCaps,
-			caCerts:      []string{filepath.FromSlash("/etc/path/default")},
-			header:       http.Header{"x-custom-1": {"custom header"}},
+			Scheme:       "https",
+			Host:         "test-default.registry",
+			Path:         "/v2",
+			Capabilities: allCaps,
+			CaCerts:      []string{filepath.FromSlash("/etc/path/default")},
+			Header:       http.Header{"x-custom-1": {"custom header"}},
 		},
 	}
 	hosts, err := parseHostsFile("", []byte(testtoml))
@@ -215,13 +215,13 @@ func TestLoadCertFiles(t *testing.T) {
 	}
 	cases := map[string]testCase{
 		"crt only": {
-			input: hostConfig{host: "testing.io", caCerts: []string{filepath.Join(dir, "testing.io", "ca.crt")}},
+			input: hostConfig{Host: "testing.io", CaCerts: []string{filepath.Join(dir, "testing.io", "ca.crt")}},
 		},
 		"crt and cert pair": {
 			input: hostConfig{
-				host:    "testing.io",
-				caCerts: []string{filepath.Join(dir, "testing.io", "ca.crt")},
-				clientPairs: [][2]string{
+				Host:    "testing.io",
+				CaCerts: []string{filepath.Join(dir, "testing.io", "ca.crt")},
+				ClientPairs: [][2]string{
 					{
 						filepath.Join(dir, "testing.io", "client.cert"),
 						filepath.Join(dir, "testing.io", "client.key"),
@@ -231,8 +231,8 @@ func TestLoadCertFiles(t *testing.T) {
 		},
 		"cert pair only": {
 			input: hostConfig{
-				host: "testing.io",
-				clientPairs: [][2]string{
+				Host: "testing.io",
+				ClientPairs: [][2]string{
 					{
 						filepath.Join(dir, "testing.io", "client.cert"),
 						filepath.Join(dir, "testing.io", "client.key"),
@@ -245,19 +245,19 @@ func TestLoadCertFiles(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 
-			hostDir := filepath.Join(dir, tc.input.host)
+			hostDir := filepath.Join(dir, tc.input.Host)
 			if err := os.MkdirAll(hostDir, 0700); err != nil {
 				t.Fatal(err)
 			}
 			defer os.RemoveAll(hostDir)
 
-			for _, f := range tc.input.caCerts {
+			for _, f := range tc.input.CaCerts {
 				if err := os.WriteFile(f, testKey, 0600); err != nil {
 					t.Fatal(err)
 				}
 			}
 
-			for _, pair := range tc.input.clientPairs {
+			for _, pair := range tc.input.ClientPairs {
 				if err := os.WriteFile(pair[0], testKey, 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -275,7 +275,7 @@ func TestLoadCertFiles(t *testing.T) {
 			}
 
 			cfg := configs[0]
-			cfg.host = tc.input.host
+			cfg.Host = tc.input.Host
 
 			if !compareHostConfig(cfg, tc.input) {
 				t.Errorf("\nexpected:\n%+v:\n\ngot:\n%+v", tc.input, cfg)
@@ -302,55 +302,55 @@ func compareRegistryHost(j, k docker.RegistryHost) bool {
 }
 
 func compareHostConfig(j, k hostConfig) bool {
-	if j.scheme != k.scheme {
+	if j.Scheme != k.Scheme {
 		return false
 	}
-	if j.host != k.host {
+	if j.Host != k.Host {
 		return false
 	}
-	if j.path != k.path {
+	if j.Path != k.Path {
 		return false
 	}
-	if j.capabilities != k.capabilities {
-		return false
-	}
-
-	if len(j.caCerts) != len(k.caCerts) {
-		return false
-	}
-	for i := range j.caCerts {
-		if j.caCerts[i] != k.caCerts[i] {
-			return false
-		}
-	}
-	if len(j.clientPairs) != len(k.clientPairs) {
-		return false
-	}
-	for i := range j.clientPairs {
-		if j.clientPairs[i][0] != k.clientPairs[i][0] {
-			return false
-		}
-		if j.clientPairs[i][1] != k.clientPairs[i][1] {
-			return false
-		}
-	}
-	if j.skipVerify != nil && k.skipVerify != nil {
-		if *j.skipVerify != *k.skipVerify {
-			return false
-		}
-	} else if j.skipVerify != nil || k.skipVerify != nil {
+	if j.Capabilities != k.Capabilities {
 		return false
 	}
 
-	if len(j.header) != len(k.header) {
+	if len(j.CaCerts) != len(k.CaCerts) {
 		return false
 	}
-	for key := range j.header {
-		if len(j.header[key]) != len(k.header[key]) {
+	for i := range j.CaCerts {
+		if j.CaCerts[i] != k.CaCerts[i] {
 			return false
 		}
-		for i := range j.header[key] {
-			if j.header[key][i] != k.header[key][i] {
+	}
+	if len(j.ClientPairs) != len(k.ClientPairs) {
+		return false
+	}
+	for i := range j.ClientPairs {
+		if j.ClientPairs[i][0] != k.ClientPairs[i][0] {
+			return false
+		}
+		if j.ClientPairs[i][1] != k.ClientPairs[i][1] {
+			return false
+		}
+	}
+	if j.SkipVerify != nil && k.SkipVerify != nil {
+		if *j.SkipVerify != *k.SkipVerify {
+			return false
+		}
+	} else if j.SkipVerify != nil || k.SkipVerify != nil {
+		return false
+	}
+
+	if len(j.Header) != len(k.Header) {
+		return false
+	}
+	for key := range j.Header {
+		if len(j.Header[key]) != len(k.Header[key]) {
+			return false
+		}
+		for i := range j.Header[key] {
+			if j.Header[key][i] != k.Header[key][i] {
 				return false
 			}
 		}
@@ -362,18 +362,18 @@ func compareHostConfig(j, k hostConfig) bool {
 func printHostConfig(hc []hostConfig) string {
 	b := bytes.NewBuffer(nil)
 	for i := range hc {
-		fmt.Fprintf(b, "\t[%d]\tscheme: %q\n", i, hc[i].scheme)
-		fmt.Fprintf(b, "\t\thost: %q\n", hc[i].host)
-		fmt.Fprintf(b, "\t\tpath: %q\n", hc[i].path)
-		fmt.Fprintf(b, "\t\tcaps: %03b\n", hc[i].capabilities)
-		fmt.Fprintf(b, "\t\tca: %#v\n", hc[i].caCerts)
-		fmt.Fprintf(b, "\t\tclients: %#v\n", hc[i].clientPairs)
-		if hc[i].skipVerify == nil {
-			fmt.Fprintf(b, "\t\tskip-verify: %v\n", hc[i].skipVerify)
+		fmt.Fprintf(b, "\t[%d]\tscheme: %q\n", i, hc[i].Scheme)
+		fmt.Fprintf(b, "\t\thost: %q\n", hc[i].Host)
+		fmt.Fprintf(b, "\t\tpath: %q\n", hc[i].Path)
+		fmt.Fprintf(b, "\t\tcaps: %03b\n", hc[i].Capabilities)
+		fmt.Fprintf(b, "\t\tca: %#v\n", hc[i].CaCerts)
+		fmt.Fprintf(b, "\t\tclients: %#v\n", hc[i].ClientPairs)
+		if hc[i].SkipVerify == nil {
+			fmt.Fprintf(b, "\t\tskip-verify: %v\n", hc[i].SkipVerify)
 		} else {
-			fmt.Fprintf(b, "\t\tskip-verify: %t\n", *hc[i].skipVerify)
+			fmt.Fprintf(b, "\t\tskip-verify: %t\n", *hc[i].SkipVerify)
 		}
-		fmt.Fprintf(b, "\t\theader: %#v\n", hc[i].header)
+		fmt.Fprintf(b, "\t\theader: %#v\n", hc[i].Header)
 	}
 	return b.String()
 }
