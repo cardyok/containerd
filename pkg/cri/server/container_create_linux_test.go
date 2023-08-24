@@ -26,17 +26,18 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/containerd/containerd/containers"
-	"github.com/containerd/containerd/contrib/apparmor"
-	"github.com/containerd/containerd/contrib/seccomp"
-	"github.com/containerd/containerd/mount"
-	"github.com/containerd/containerd/oci"
 	imagespec "github.com/opencontainers/image-spec/specs-go/v1"
 	runtimespec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/selinux/go-selinux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
+
+	"github.com/containerd/containerd/containers"
+	"github.com/containerd/containerd/contrib/apparmor"
+	"github.com/containerd/containerd/contrib/seccomp"
+	"github.com/containerd/containerd/mount"
+	"github.com/containerd/containerd/oci"
 
 	"github.com/containerd/containerd/pkg/cap"
 	"github.com/containerd/containerd/pkg/cri/annotations"
@@ -745,7 +746,7 @@ func TestMountPropagation(t *testing.T) {
 		var spec runtimespec.Spec
 		spec.Linux = &runtimespec.Linux{}
 
-		err := opts.WithMounts(c.os, config, []*runtime.Mount{test.criMount}, "")(context.Background(), nil, nil, &spec)
+		err := opts.WithMounts(c.os, config, []*runtime.Mount{test.criMount}, "", nil)(context.Background(), nil, nil, &spec)
 		if test.expectErr {
 			require.Error(t, err)
 		} else {

@@ -197,7 +197,7 @@ func (c *criService) containerSpec(
 		}
 	}()
 
-	specOpts = append(specOpts, customopts.WithMounts(c.os, config, extraMounts, mountLabel))
+	specOpts = append(specOpts, customopts.WithMounts(c.os, config, extraMounts, mountLabel, sandboxConfig.Annotations))
 
 	if !c.config.DisableProcMount {
 		// Change the default masked/readonly paths to empty slices

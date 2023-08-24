@@ -29,18 +29,25 @@ import (
 	"syscall"
 
 	"github.com/containerd/cgroups"
-	"github.com/containerd/containerd/containers"
-	"github.com/containerd/containerd/log"
-	"github.com/containerd/containerd/mount"
-	"github.com/containerd/containerd/oci"
 	runtimespec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/selinux/go-selinux/label"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 
+	"github.com/containerd/containerd/containers"
+	"github.com/containerd/containerd/log"
+	"github.com/containerd/containerd/mount"
+	"github.com/containerd/containerd/oci"
 	"github.com/containerd/containerd/pkg/cri/util"
 	osinterface "github.com/containerd/containerd/pkg/os"
+)
+
+const (
+	//alibabaCloud is default prefix for all alibabacloud related annotation.
+	alibabaCloud = "alibabacloud.com"
+	// customVolumeSpec specifies custom volume specs for runtime
+	customVolumeSpec = alibabaCloud + "/pod-volumes"
 )
 
 // WithAdditionalGIDs adds any additional groups listed for a particular user in the
@@ -92,7 +99,7 @@ func WithoutDefaultSecuritySettings(_ context.Context, _ oci.Client, c *containe
 }
 
 // WithMounts sorts and adds runtime and CRI mounts to the spec
-func WithMounts(osi osinterface.OS, config *runtime.ContainerConfig, extra []*runtime.Mount, mountLabel string) oci.SpecOpts {
+func WithMounts(osi osinterface.OS, config *runtime.ContainerConfig, extra []*runtime.Mount, mountLabel string, sandboxAnno map[string]string) oci.SpecOpts {
 	return func(ctx context.Context, client oci.Client, _ *containers.Container, s *runtimespec.Spec) (err error) {
 		// mergeMounts merge CRI mounts with extra mounts. If a mount destination
 		// is mounted by both a CRI mount and an extra mount, the CRI mount will
@@ -158,19 +165,22 @@ func WithMounts(osi osinterface.OS, config *runtime.ContainerConfig, extra []*ru
 			)
 			// Create the host path if it doesn't exist.
 			// TODO(random-liu): Add CRI validation test for this case.
-			if _, err := osi.Stat(src); err != nil {
-				if !os.IsNotExist(err) {
-					return fmt.Errorf("failed to stat %q: %w", src, err)
+			skipSrcPrepare := shouldSkipVolumeResolve(src, sandboxAnno)
+			if !skipSrcPrepare {
+				if _, err := osi.Stat(src); err != nil {
+					if !os.IsNotExist(err) {
+						return fmt.Errorf("failed to stat %q: %w", src, err)
+					}
+					if err := osi.MkdirAll(src, 0755); err != nil {
+						return fmt.Errorf("failed to mkdir %q: %w", src, err)
+					}
 				}
-				if err := osi.MkdirAll(src, 0755); err != nil {
-					return fmt.Errorf("failed to mkdir %q: %w", src, err)
+				// TODO(random-liu): Add cri-containerd integration test or cri validation test
+				// for this.
+				src, err = osi.ResolveSymbolicLink(src)
+				if err != nil {
+					return fmt.Errorf("failed to resolve symlink %q: %w", src, err)
 				}
-			}
-			// TODO(random-liu): Add cri-containerd integration test or cri validation test
-			// for this.
-			src, err := osi.ResolveSymbolicLink(src)
-			if err != nil {
-				return fmt.Errorf("failed to resolve symlink %q: %w", src, err)
 			}
 			if s.Linux == nil {
 				s.Linux = &runtimespec.Linux{}
@@ -182,14 +192,18 @@ func WithMounts(osi osinterface.OS, config *runtime.ContainerConfig, extra []*ru
 				// Since default root propagation in runc is rprivate ignore
 				// setting the root propagation
 			case runtime.MountPropagation_PROPAGATION_BIDIRECTIONAL:
-				if err := ensureShared(src, osi.(osinterface.UNIX).LookupMount); err != nil {
-					return err
+				if !skipSrcPrepare {
+					if err := ensureShared(src, osi.(osinterface.UNIX).LookupMount); err != nil {
+						return err
+					}
 				}
 				options = append(options, "rshared")
 				s.Linux.RootfsPropagation = "rshared"
 			case runtime.MountPropagation_PROPAGATION_HOST_TO_CONTAINER:
-				if err := ensureSharedOrSlave(src, osi.(osinterface.UNIX).LookupMount); err != nil {
-					return err
+				if !skipSrcPrepare {
+					if err := ensureSharedOrSlave(src, osi.(osinterface.UNIX).LookupMount); err != nil {
+						return err
+					}
 				}
 				options = append(options, "rslave")
 				if s.Linux.RootfsPropagation != "rshared" &&
@@ -764,4 +778,16 @@ func GetUTSNamespace(pid uint32) string {
 // GetPIDNamespace returns the pid namespace of a process.
 func GetPIDNamespace(pid uint32) string {
 	return fmt.Sprintf(pidNSFormat, pid)
+}
+
+// shouldSkipVolumeResolve returns true if the source volume satisfies csi custom volume protocol, volume ment for guest VM is not
+// usable on host machine, containerd should not resolve it .
+func shouldSkipVolumeResolve(src string, annotations map[string]string) (ret bool) {
+	ret = false
+	if _, ok := annotations[customVolumeSpec]; ok {
+		if strings.Contains(src, ":") && src[0] != '/' {
+			ret = true
+		}
+	}
+	return
 }
