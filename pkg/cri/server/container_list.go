@@ -17,6 +17,7 @@
 package server
 
 import (
+	"strconv"
 	"time"
 
 	"golang.org/x/net/context"
@@ -34,7 +35,12 @@ func (c *criService) ListContainers(ctx context.Context, r *runtime.ListContaine
 
 	var containers []*runtime.Container
 	for _, container := range containersInStore {
-		containers = append(containers, toCRIContainer(container))
+		criContainer := toCRIContainer(container)
+		if criContainer.Annotations == nil {
+			criContainer.Annotations = make(map[string]string)
+		}
+		criContainer.Annotations[containerPID] = strconv.Itoa(int(container.Status.Get().Pid))
+		containers = append(containers, criContainer)
 	}
 
 	containers = c.filterCRIContainers(containers, r.GetFilter())
@@ -46,6 +52,10 @@ func (c *criService) ListContainers(ctx context.Context, r *runtime.ListContaine
 // toCRIContainer converts internal container object into CRI container.
 func toCRIContainer(container containerstore.Container) *runtime.Container {
 	status := container.Status.Get()
+	annotations := make(map[string]string)
+	for k, v := range container.Config.GetAnnotations() {
+		annotations[k] = v
+	}
 	return &runtime.Container{
 		Id:           container.ID,
 		PodSandboxId: container.SandboxID,
@@ -55,7 +65,7 @@ func toCRIContainer(container containerstore.Container) *runtime.Container {
 		State:        status.State(),
 		CreatedAt:    status.CreatedAt,
 		Labels:       container.Config.GetLabels(),
-		Annotations:  container.Config.GetAnnotations(),
+		Annotations:  annotations,
 	}
 }
 

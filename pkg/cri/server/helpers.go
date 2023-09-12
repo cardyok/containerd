@@ -91,6 +91,8 @@ const (
 	sandboxMetadataExtension = criContainerdPrefix + ".sandbox.metadata"
 	// containerMetadataExtension is an extension name that identify metadata of container in CreateContainerRequest
 	containerMetadataExtension = criContainerdPrefix + ".container.metadata"
+	// containerPID is an extension name that identify pid of container
+	containerPID = criContainerdPrefix + ".container.pid"
 
 	// defaultIfName is the default network interface for the pods
 	defaultIfName = "eth0"
