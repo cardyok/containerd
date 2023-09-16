@@ -20,14 +20,13 @@
 package cgroups
 
 import (
-	"github.com/containerd/cgroups"
+	metrics "github.com/docker/go-metrics"
+
 	"github.com/containerd/containerd/events"
-	v1 "github.com/containerd/containerd/metrics/cgroups/v1"
-	v2 "github.com/containerd/containerd/metrics/cgroups/v2"
+	"github.com/containerd/containerd/metrics/cgroups/generic"
 	"github.com/containerd/containerd/platforms"
 	"github.com/containerd/containerd/plugin"
 	"github.com/containerd/containerd/runtime"
-	metrics "github.com/docker/go-metrics"
 )
 
 // Config for the cgroups monitor
@@ -64,11 +63,7 @@ func New(ic *plugin.InitContext) (interface{}, error) {
 		return nil, err
 	}
 
-	if cgroups.Mode() == cgroups.Unified {
-		tm, err = v2.NewTaskMonitor(ic.Context, ep.(events.Publisher), ns)
-	} else {
-		tm, err = v1.NewTaskMonitor(ic.Context, ep.(events.Publisher), ns)
-	}
+	tm, err = generic.NewTaskMonitor(ic.Context, ep.(events.Publisher), ns)
 	if err != nil {
 		return nil, err
 	}
