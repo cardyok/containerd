@@ -24,10 +24,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
-	"github.com/containerd/containerd/pkg/userns"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"golang.org/x/sys/unix"
+
+	"github.com/containerd/containerd/pkg/userns"
 )
 
 // ErrNotADevice denotes that a file is not a valid linux device.
@@ -46,6 +48,19 @@ func HostDevices() ([]specs.LinuxDevice, error) {
 }
 
 func getDevices(path, containerPath string) ([]specs.LinuxDevice, error) {
+	if strings.HasSuffix(path, ":") {
+		return []specs.LinuxDevice{
+			{
+				Path:     containerPath,
+				Type:     path,
+				Major:    -1,
+				Minor:    -1,
+				FileMode: nil,
+				UID:      nil,
+				GID:      nil,
+			},
+		}, nil
+	}
 	stat, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("error stating device path: %w", err)

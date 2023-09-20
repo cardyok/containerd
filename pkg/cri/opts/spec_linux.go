@@ -310,7 +310,15 @@ func WithDevices(osi osinterface.OS, config *runtime.ContainerConfig, enableDevi
 		oldDevices := len(s.Linux.Devices)
 
 		for _, device := range config.GetDevices() {
-			path, err := osi.ResolveSymbolicLink(device.HostPath)
+			var (
+				path string
+				err  error
+			)
+			if !strings.HasSuffix(device.HostPath, ":") {
+				path, err = osi.ResolveSymbolicLink(device.HostPath)
+			} else {
+				path = device.HostPath
+			}
 			if err != nil {
 				return err
 			}
