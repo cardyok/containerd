@@ -22,12 +22,14 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/containerd/containerd/content"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/platforms"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
+
+	"github.com/containerd/containerd/content"
+	"github.com/containerd/containerd/errdefs"
+	"github.com/containerd/containerd/log"
+	"github.com/containerd/containerd/platforms"
 )
 
 var (
@@ -319,4 +321,42 @@ func LimitManifests(f HandlerFunc, m platforms.MatchComparer, n int) HandlerFunc
 		}
 		return children, nil
 	}
+}
+
+// SizeLimit is a handler wrapper which inspects size of image to be downloaded, if exceeds configured size, then it is rejected
+func SizeLimit(sizeLimit int64) func(f Handler) Handler {
+	return func(f Handler) Handler {
+		return HandlerFunc(func(ctx context.Context, desc ocispec.Descriptor) ([]ocispec.Descriptor, error) {
+			children, err := f.Handle(ctx, desc)
+			if err != nil {
+				return children, err
+			}
+			switch desc.MediaType {
+			case MediaTypeDockerSchema2Manifest, ocispec.MediaTypeImageManifest:
+				totalChildrenSize := int64(0)
+				for _, c := range children {
+					totalChildrenSize += c.Size
+				}
+				log.G(ctx).Warnf("image size %s(%d) limit %s(%d)", ByteCountDecimal(totalChildrenSize), totalChildrenSize, ByteCountDecimal(sizeLimit), sizeLimit)
+				if totalChildrenSize > sizeLimit {
+					return children, fmt.Errorf("image size %s(%d) exceeds limit %s(%d)", ByteCountDecimal(totalChildrenSize), totalChildrenSize, ByteCountDecimal(sizeLimit), sizeLimit)
+				}
+			default:
+			}
+			return children, nil
+		})
+	}
+}
+
+func ByteCountDecimal(b int64) string {
+	const unit = 1000
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "kMGTPE"[exp])
 }

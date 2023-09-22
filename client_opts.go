@@ -19,13 +19,13 @@ package containerd
 import (
 	"time"
 
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"google.golang.org/grpc"
+
 	"github.com/containerd/containerd/images"
 	"github.com/containerd/containerd/platforms"
 	"github.com/containerd/containerd/remotes"
 	"github.com/containerd/containerd/snapshots"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-
-	"google.golang.org/grpc"
 )
 
 type clientOpts struct {
@@ -225,6 +225,21 @@ func WithImageHandler(h images.Handler) RemoteOpt {
 func WithImageHandlerWrapper(w func(images.Handler) images.Handler) RemoteOpt {
 	return func(client *Client, c *RemoteContext) error {
 		c.HandlerWrapper = w
+		return nil
+	}
+}
+
+// WithAppendImageHandlerWrapper wraps the handlers to be called on dispatch.
+func WithAppendImageHandlerWrapper(w func(images.Handler) images.Handler) RemoteOpt {
+	return func(client *Client, c *RemoteContext) error {
+		if c.HandlerWrapper == nil {
+			c.HandlerWrapper = w
+			return nil
+		}
+		wrapper := c.HandlerWrapper
+		c.HandlerWrapper = func(h images.Handler) images.Handler {
+			return w(wrapper(h))
+		}
 		return nil
 	}
 }

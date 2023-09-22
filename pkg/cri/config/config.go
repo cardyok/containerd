@@ -110,6 +110,9 @@ type ContainerdConfig struct {
 	// stargz snapshotter (https://github.com/containerd/stargz-snapshotter).
 	DisableSnapshotAnnotations bool `toml:"disable_snapshot_annotations" json:"disableSnapshotAnnotations"`
 
+	// MaxImageSize is the maximum size of an image in kubernetes unit.
+	MaxImageSize string `toml:"max_image_size" json:"maxImageSize"`
+
 	// DiscardUnpackedLayers is a boolean flag to specify whether to allow GC to
 	// remove layers from the content store after successfully unpacking these
 	// layers to the snapshotter.

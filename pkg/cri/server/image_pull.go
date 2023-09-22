@@ -35,6 +35,7 @@ import (
 	imagespec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
+	"k8s.io/apimachinery/pkg/api/resource"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 
 	"github.com/containerd/containerd"
@@ -196,6 +197,13 @@ func (c *criService) PullImage(ctx context.Context, r *runtime.PullImageRequest)
 	if !c.config.ContainerdConfig.DisableSnapshotAnnotations {
 		pullOpts = append(pullOpts,
 			containerd.WithImageHandlerWrapper(snpkg.AppendInfoHandlerWrapper(ref)))
+	}
+
+	if c.config.ContainerdConfig.MaxImageSize != "" {
+		parse := resource.MustParse(c.config.ContainerdConfig.MaxImageSize)
+		s := parse.Value()
+		pullOpts = append(pullOpts,
+			containerd.WithAppendImageHandlerWrapper(containerdimages.SizeLimit(s)))
 	}
 
 	if c.config.ContainerdConfig.DiscardUnpackedLayers {
