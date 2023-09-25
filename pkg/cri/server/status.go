@@ -21,13 +21,17 @@ import (
 	"fmt"
 	goruntime "runtime"
 
-	"github.com/containerd/containerd/log"
 	"golang.org/x/net/context"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
+
+	"github.com/containerd/containerd/log"
 )
 
 // networkNotReadyReason is the reason reported when network is not ready.
 const networkNotReadyReason = "NetworkPluginNotReady"
+
+// containerdRootDir is the key of cri root dir.
+const criRootDir = "CriRootDir"
 
 // Status returns the status of the runtime.
 func (c *criService) Status(ctx context.Context, r *runtime.StatusRequest) (*runtime.StatusResponse, error) {
@@ -57,6 +61,8 @@ func (c *criService) Status(ctx context.Context, r *runtime.StatusRequest) (*run
 			networkCondition,
 		}},
 	}
+	resp.Info = make(map[string]string)
+	resp.Info[criRootDir] = c.config.RootDir
 	if r.Verbose {
 		configByt, err := json.Marshal(c.config)
 		if err != nil {
