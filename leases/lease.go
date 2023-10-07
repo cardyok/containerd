@@ -21,6 +21,11 @@ import (
 	"time"
 )
 
+const (
+	// GCOnRestart declares that the lease should be garbage collected on restart.
+	GCOnRestart = "containerd.io/lease/gc.restart"
+)
+
 // Opt is used to set options on a lease
 type Opt func(*Lease) error
 

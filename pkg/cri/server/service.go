@@ -35,6 +35,7 @@ import (
 
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/content/local"
+	"github.com/containerd/containerd/leases"
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/oci"
 	"github.com/containerd/containerd/pkg/atomic"
@@ -56,9 +57,9 @@ import (
 )
 
 const (
-	//sandboxKillSignalTimeout is timeout for sandbox kill signal
+	// sandboxKillSignalTimeout is timeout for sandbox kill signal
 	sandboxKillSignalTimeout = "io.containerd.cri.timeout.sandbox.kill"
-	//containerKillSignalTimeout is timeout for container kill signal
+	// containerKillSignalTimeout is timeout for container kill signal
 	containerKillSignalTimeout = "io.containerd.cri.timeout.container.kill"
 )
 
@@ -151,7 +152,7 @@ func NewCRIService(config criconfig.Config, client *containerd.Client) (CRIServi
 	var err error
 	labels := label.NewStore()
 
-	//Load active snapshot plugins from containerd
+	// Load active snapshot plugins from containerd
 	ps := client.IntrospectionService()
 	filters := []string{"type==io.containerd.snapshotter.v1,status==ok"}
 	response, err := ps.Plugins(context.Background(), filters)
@@ -181,6 +182,21 @@ func NewCRIService(config criconfig.Config, client *containerd.Client) (CRIServi
 
 	if client.SnapshotService(c.config.ContainerdConfig.Snapshotter) == nil {
 		return nil, fmt.Errorf("failed to find snapshotter %q", c.config.ContainerdConfig.Snapshotter)
+	}
+
+	// initializes leases
+	ls := client.LeasesService()
+	allLeases, err := ls.List(ctrdutil.WithNamespace(context.Background()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to list leases: %v", err)
+	}
+	for _, lease := range allLeases {
+		if _, exist := lease.Labels[leases.GCOnRestart]; exist {
+			logrus.Infof("Cleaning up leaked lease %q", lease.ID)
+			if err := ls.Delete(ctrdutil.WithNamespace(context.Background()), lease); err != nil {
+				return nil, fmt.Errorf("failed to delete lease %s: %v", lease.ID, err)
+			}
+		}
 	}
 
 	c.imageFSPath = imageFSPath(config.ContainerdRootDir, snapshotters)

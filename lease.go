@@ -39,6 +39,7 @@ func (c *Client) WithLease(ctx context.Context, opts ...leases.Opt) (context.Con
 		opts = []leases.Opt{
 			leases.WithRandomID(),
 			leases.WithExpiration(24 * time.Hour),
+			leases.WithLabels(map[string]string{leases.GCOnRestart: "true"}),
 		}
 	}
 
