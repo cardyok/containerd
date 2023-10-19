@@ -32,6 +32,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/pelletier/go-toml"
@@ -56,10 +57,11 @@ type TransportConfig struct {
 }
 
 type hostConfig struct {
-	Scheme   string `toml:"scheme"`
-	Host     string `toml:"host"`
-	Path     string `toml:"path"`
-	HostName string `toml:"host_name"`
+	Scheme        string `toml:"scheme"`
+	Host          string `toml:"host"`
+	Path          string `toml:"path"`
+	HostName      string `toml:"host_name"`
+	FailurePolicy string `toml:"failure_policy"`
 
 	Capabilities docker.HostCapabilities `toml:"capabilities"`
 	Header       http.Header             `toml:"header"`
@@ -118,6 +120,7 @@ func defaultHostConfig(hostPath string, defaultScheme string) hostConfig {
 
 	host.Transport = defaultTransportConfig()
 	host.HostName = "direct"
+	host.FailurePolicy = "Ignore"
 	return host
 }
 
@@ -161,7 +164,7 @@ func ConfigureHosts(ctx context.Context, options HostOptions, ref string, annota
 		}
 
 		if options.ProxyHostDir != "" {
-			if proxyHosts, err := loadProxyDir(options.ProxyHostDir, host, options.DefaultScheme); err == nil {
+			if proxyHosts, err := loadProxyDir(ctx, options.ProxyHostDir, host, options.DefaultScheme); err == nil {
 				hosts = append(hosts, proxyHosts...)
 			} else if !os.IsNotExist(err) {
 				return nil, fmt.Errorf("failed to parse proxy config file for %s :%w", host, err)
@@ -237,6 +240,14 @@ func ConfigureHosts(ctx context.Context, options HostOptions, ref string, annota
 			rhosts[i].Path = host.Path
 			rhosts[i].Capabilities = host.Capabilities
 			rhosts[i].Header = host.Header
+			switch strings.ToLower(host.FailurePolicy) {
+			case "ignore":
+				rhosts[i].FailurePolicy = docker.Ignore
+			case "fail":
+				rhosts[i].FailurePolicy = docker.Fail
+			default:
+				rhosts[i].FailurePolicy = docker.Ignore
+			}
 			if host.HTTPProxy != "" {
 				if rhosts[i].Header == nil {
 					rhosts[i].Header = http.Header{}
@@ -333,7 +344,7 @@ func ConfigureHosts(ctx context.Context, options HostOptions, ref string, annota
 
 }
 
-func loadProxyDir(proxyDir string, hostPath string, scheme string) ([]hostConfig, error) {
+func loadProxyDir(ctx context.Context, proxyDir string, hostPath string, scheme string) ([]hostConfig, error) {
 	var hostConfigs []hostConfig
 
 	if _, err := os.Stat(proxyDir); err != nil {
@@ -360,7 +371,9 @@ func loadProxyDir(proxyDir string, hostPath string, scheme string) ([]hostConfig
 			realName := strings.Split(f.Name(), ".")
 			config.HostName = strings.Join(realName[:len(realName)-1], ".")
 		}
-		hostConfigs = append(hostConfigs, config)
+		if ensureProxyAlive(ctx, &config) {
+			hostConfigs = append(hostConfigs, config)
+		}
 	}
 	return hostConfigs, nil
 }
@@ -776,4 +789,40 @@ func elevateHosts(original []hostConfig, hostName string) []hostConfig {
 		}
 	}
 	return original
+}
+
+// ensureProxyAlive probes the proxies specified in config to ensure they are alive.
+func ensureProxyAlive(ctx context.Context, config *hostConfig) bool {
+	dialer := &net.Dialer{
+		Timeout:       config.Transport.DialerTimeout,
+		KeepAlive:     config.Transport.DialerKeepAlive,
+		FallbackDelay: config.Transport.DialerFallbackDelay,
+	}
+
+	httpProbeErr := probeProxy(ctx, dialer, config.HTTPProxy, config.HostName)
+	if httpProbeErr != nil {
+		config.HTTPProxy = ""
+	}
+	httpsProbeErr := probeProxy(ctx, dialer, config.HTTPSProxy, config.HostName)
+	if httpsProbeErr != nil {
+		config.HTTPSProxy = ""
+	}
+	return !(httpProbeErr != nil && httpsProbeErr != nil)
+}
+
+// probeProxy probes the proxy ensure it is alive.
+func probeProxy(ctx context.Context, dialer *net.Dialer, proxy string, hostName string) error {
+	if proxy == "" {
+		return nil
+	}
+
+	if conn, err := dialer.DialContext(ctx, "tcp", proxy); err == nil {
+		conn.Close()
+	} else {
+		log.G(ctx).Warnf("[%v] tcp probe for http proxy failed: %v", hostName, err)
+		if errors.Is(err, syscall.ECONNREFUSED) {
+			return err
+		}
+	}
+	return nil
 }

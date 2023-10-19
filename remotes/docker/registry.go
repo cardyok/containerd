@@ -58,6 +58,17 @@ const (
 	// Reserved for future capabilities (i.e. search, catalog, remove)
 )
 
+// FailurePolicy describes the behavior of proxy when it fails, currrently supported policies are
+// 	Ignore: ignore the failure and proceed to next proxy, include the error message if the whole pull process fails
+//  Fail: Fail the whole pull process and do not process to further proxies
+// Default value is Ignore
+type FailurePolicy uint8
+
+const (
+	Ignore FailurePolicy = iota
+	Fail
+)
+
 // Has checks whether the capabilities list has the provide capability
 func (c HostCapabilities) Has(t HostCapabilities) bool {
 	return c&t == t
@@ -67,14 +78,15 @@ func (c HostCapabilities) Has(t HostCapabilities) bool {
 // host, representing the capabilities, authorizations, connection
 // configuration, and location.
 type RegistryHost struct {
-	Client       *http.Client
-	Authorizer   Authorizer
-	Host         string
-	Scheme       string
-	Path         string
-	Capabilities HostCapabilities
-	Header       http.Header
-	HostName     string
+	Client        *http.Client
+	Authorizer    Authorizer
+	Host          string
+	Scheme        string
+	Path          string
+	Capabilities  HostCapabilities
+	Header        http.Header
+	FailurePolicy FailurePolicy
+	HostName      string
 }
 
 func (h RegistryHost) isProxy(refhost string) bool {

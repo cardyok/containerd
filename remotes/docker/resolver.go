@@ -303,7 +303,10 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (string, ocisp
 				hostErrs = append(hostErrs, errors.Wrapf(err, host.HostName))
 				log.G(ctx).WithError(err).Info("trying next host")
 				r.invalidHosts = append(r.invalidHosts, i)
-				continue // try another host
+				if host.FailurePolicy == Fail {
+					return "", ocispec.Descriptor{}, errorParse(hostErrs) // try another host
+				}
+				continue
 			}
 			resp.Body.Close() // don't care about body contents.
 
@@ -312,13 +315,19 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (string, ocisp
 					log.G(ctx).Info("trying next host - response was http.StatusNotFound")
 					hostErrs = append(hostErrs, errors.Errorf("%s: %s", resp.Status, host.HostName))
 					r.invalidHosts = append(r.invalidHosts, i)
+					if host.FailurePolicy == Fail {
+						return "", ocispec.Descriptor{}, errorParse(hostErrs)
+					}
 					continue
 				}
 				if resp.StatusCode > 399 {
 					log.G(ctx).Infof("trying next host - response was %v", resp.StatusCode)
 					hostErrs = append(hostErrs, errors.Errorf("%s: %s", resp.Status, host.HostName))
 					r.invalidHosts = append(r.invalidHosts, i)
-					continue // try another host
+					if host.FailurePolicy == Fail {
+						return "", ocispec.Descriptor{}, errorParse(hostErrs) // try another host
+					}
+					continue
 				}
 				hostErrs = append(hostErrs, errors.Wrapf(errors.Errorf("failed with unexpected status code %v: %v", u, resp.Status), host.HostName))
 				return "", ocispec.Descriptor{}, errorParse(hostErrs)
@@ -391,6 +400,9 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (string, ocisp
 			// Prevent resolving to excessively large manifests
 			if size > MaxManifestSize {
 				hostErrs = append(hostErrs, errors.Wrapf(errdefs.ErrNotFound, "%s: rejecting %d byte manifest for %s", host.HostName, size, ref))
+				if host.FailurePolicy == Fail {
+					return "", ocispec.Descriptor{}, errorParse(hostErrs)
+				}
 				continue
 			}
 

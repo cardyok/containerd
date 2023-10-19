@@ -111,6 +111,9 @@ func (r dockerFetcher) Fetch(ctx context.Context, desc ocispec.Descriptor) (io.R
 				rc, err := r.open(ctx, req, desc.MediaType, offset)
 				if err != nil {
 					hostErrs = append(hostErrs, errors.Wrapf(err, host.HostName))
+					if host.FailurePolicy == Fail {
+						return nil, errorParse(hostErrs)
+					}
 					continue // try another host
 				}
 
@@ -133,6 +136,9 @@ func (r dockerFetcher) Fetch(ctx context.Context, desc ocispec.Descriptor) (io.R
 			rc, err := r.open(ctx, req, desc.MediaType, offset)
 			if err != nil {
 				hostErrs = append(hostErrs, errors.Wrapf(err, host.HostName))
+				if host.FailurePolicy == Fail {
+					return nil, errorParse(hostErrs)
+				}
 				continue // try another host
 			}
 
