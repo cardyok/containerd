@@ -14,6 +14,9 @@ const (
 
 	// snapshotterLabel is a label which contains default snapshotter selected for pod and its containers
 	snapshotterLabel = "containerd.io/snapshot.cri.snapshotter"
+
+	// overrideRuntimeHandler specifies the overriding runtime handler
+	overrideRuntimeHandler = "alibabacloud.com/override-runtime-handler"
 )
 
 // checkStringSlice checks whether target exists in src string slice.

@@ -95,13 +95,17 @@ func (c *criService) RunPodSandbox(ctx context.Context, r *runtime.RunPodSandbox
 		}
 	}()
 
+	runtimeHandler := r.GetRuntimeHandler()
+	if overrideRuntimeHandler, ok := config.Annotations[overrideRuntimeHandler]; ok && overrideRuntimeHandler != "" {
+		runtimeHandler = overrideRuntimeHandler
+	}
 	// Create initial internal sandbox object.
 	sandbox := sandboxstore.NewSandbox(
 		sandboxstore.Metadata{
 			ID:             id,
 			Name:           name,
 			Config:         config,
-			RuntimeHandler: r.GetRuntimeHandler(),
+			RuntimeHandler: runtimeHandler,
 		},
 		sandboxstore.Status{
 			State: sandboxstore.StateUnknown,
@@ -118,7 +122,7 @@ func (c *criService) RunPodSandbox(ctx context.Context, r *runtime.RunPodSandbox
 		return nil, fmt.Errorf("failed to get image from containerd %q: %w", image.ID, err)
 	}
 
-	ociRuntime, err := c.getSandboxRuntime(config, r.GetRuntimeHandler())
+	ociRuntime, err := c.getSandboxRuntime(config, runtimeHandler)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sandbox runtime: %w", err)
 	}
