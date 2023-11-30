@@ -512,10 +512,18 @@ func WithResources(resources *runtime.LinuxContainerResources, tolerateMissingHu
 
 		if !disableHugetlbController {
 			if isHugetlbControllerPresent() {
+				hugepageMap := make(map[string]uint64)
+				for _, limit := range s.Linux.Resources.HugepageLimits {
+					hugepageMap[limit.Pagesize] = limit.Limit
+				}
 				for _, limit := range hugepages {
+					hugepageMap[limit.PageSize] = limit.Limit
+				}
+				s.Linux.Resources.HugepageLimits = nil
+				for k, v := range hugepageMap {
 					s.Linux.Resources.HugepageLimits = append(s.Linux.Resources.HugepageLimits, runtimespec.LinuxHugepageLimit{
-						Pagesize: limit.PageSize,
-						Limit:    limit.Limit,
+						Pagesize: k,
+						Limit:    v,
 					})
 				}
 			} else {
