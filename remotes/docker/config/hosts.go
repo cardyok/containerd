@@ -233,7 +233,7 @@ func ConfigureHosts(ctx context.Context, options HostOptions, ref string, annota
 			if options.Credentials != nil {
 				authOpts = append(authOpts, docker.WithAuthCreds(options.Credentials))
 			}
-			authorizer := docker.NewDockerAuthorizer(authOpts...)
+			authHeaders := http.Header{}
 
 			rhosts[i].Scheme = host.Scheme
 			rhosts[i].Host = host.Host
@@ -254,6 +254,7 @@ func ConfigureHosts(ctx context.Context, options HostOptions, ref string, annota
 				}
 				for key, values := range defaultTransport.ProxyConnectHeader {
 					rhosts[i].Header[key] = values
+					authHeaders[key] = values
 				}
 			}
 
@@ -269,9 +270,13 @@ func ConfigureHosts(ctx context.Context, options HostOptions, ref string, annota
 				for oldKey, newKey := range host.HTTPHeaderConvert {
 					if v, ok := annotations[oldKey]; ok {
 						rhosts[i].Header[newKey] = []string{v}
+						authHeaders[newKey] = []string{v}
 					}
 				}
 			}
+
+			authOpts = append(authOpts, docker.WithAuthHeader(authHeaders))
+			authorizer := docker.NewDockerAuthorizer(authOpts...)
 
 			if host.CaCerts != nil || host.ClientPairs != nil || host.SkipVerify != nil {
 				tr := defaultTransport.Clone()
