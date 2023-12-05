@@ -44,6 +44,7 @@ import (
 	"github.com/containerd/containerd/log"
 	crilabels "github.com/containerd/containerd/pkg/cri/labels"
 	snpkg "github.com/containerd/containerd/pkg/snapshotters"
+	"github.com/containerd/containerd/reference"
 	distribution "github.com/containerd/containerd/reference/docker"
 	"github.com/containerd/containerd/remotes/docker"
 	"github.com/containerd/containerd/remotes/docker/config"
@@ -126,6 +127,7 @@ func (c *criService) PullImage(ctx context.Context, r *runtime.PullImageRequest)
 		})
 	}
 
+	plainHTTP := false
 	if sandboxConfig != nil {
 		if val, ok := sandboxConfig.Annotations[insecureRegistry]; ok {
 			skipMap := make(map[string]bool)
@@ -141,6 +143,22 @@ func (c *criService) PullImage(ctx context.Context, r *runtime.PullImageRequest)
 				return nil
 			})
 		}
+
+		refSpec, err := reference.Parse(ref)
+		if err != nil {
+			log.G(ctx).Warnf("failed to parse image reference %q, stick to https: %v", ref, err)
+		}
+
+		if val, ok := sandboxConfig.Annotations[plainHTTPRegistry]; ok && err == nil {
+			for _, httpHostMatch := range strings.Split(val, ",") {
+				httpHostMatch = strings.TrimSpace(httpHostMatch)
+				if refSpec.Hostname() == httpHostMatch {
+					log.G(ctx).Infof("PullImage for %q with plainHTTP hosts: %v", imageRef, refSpec.Hostname())
+					plainHTTP = true
+					break
+				}
+			}
+		}
 	}
 
 	var hostConfig string
@@ -155,7 +173,7 @@ func (c *criService) PullImage(ctx context.Context, r *runtime.PullImageRequest)
 	var (
 		resolver = docker.NewResolver(docker.ResolverOptions{
 			Headers:       c.config.Registry.Headers,
-			Hosts:         c.registryHosts(ctx, r.GetAuth(), hostConfig, ref, hostAnnotations),
+			Hosts:         c.registryHosts(ctx, r.GetAuth(), hostConfig, ref, hostAnnotations, plainHTTP),
 			TransportOpts: transportOpts,
 		})
 		isSchema1    bool
@@ -425,7 +443,7 @@ func hostDirFromRoots(roots []string) func(string) (string, error) {
 }
 
 // registryHosts is the registry hosts to be used by the resolver.
-func (c *criService) registryHosts(ctx context.Context, auth *runtime.AuthConfig, hostConfig string, ref string, annotations map[string]string) docker.RegistryHosts {
+func (c *criService) registryHosts(ctx context.Context, auth *runtime.AuthConfig, hostConfig string, ref string, annotations map[string]string, plainHTTP bool) docker.RegistryHosts {
 	paths := filepath.SplitList(c.config.Registry.ConfigPath)
 	if len(paths) > 0 || c.config.Registry.ProxyHostDir != "" {
 		hostOptions := config.HostOptions{}
@@ -440,6 +458,9 @@ func (c *criService) registryHosts(ctx context.Context, auth *runtime.AuthConfig
 			return ParseAuth(hostauth, host)
 		}
 		hostOptions.HostDir = hostDirFromRoots(paths)
+		if plainHTTP {
+			hostOptions.DefaultScheme = "http"
+		}
 		hostOptions.ProxyHostDir = c.config.Registry.ProxyHostDir
 		if hostConfig != "" {
 			var hostPolicies []config.HostPolicy

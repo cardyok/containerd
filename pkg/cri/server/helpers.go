@@ -110,6 +110,8 @@ const (
 	aliyunKubernetes = "k8s.aliyun.com/"
 	// insecureRegistry is the annotation for specifying self-signed registries
 	insecureRegistry = aliyunKubernetes + "insecure-registry"
+	// plainHTTPRegistry is the annotation for specifying registries which needs http request
+	plainHTTPRegistry = aliyunKubernetes + "plain-http-registry"
 	// cniResultFormat is default format for cni extra annotation result json file
 	cniResultFormat = "cni_runtime_annotations_%s.json"
 )
