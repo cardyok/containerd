@@ -21,15 +21,24 @@ package task
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sync"
 
 	"github.com/containerd/cgroups"
 	cgroupsv2 "github.com/containerd/cgroups/v2"
+	runcC "github.com/containerd/go-runc"
+	"github.com/containerd/ttrpc"
+	"github.com/containerd/typeurl"
+	ptypes "github.com/gogo/protobuf/types"
+	"github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/sirupsen/logrus"
+
 	eventstypes "github.com/containerd/containerd/api/events"
 	"github.com/containerd/containerd/api/types/task"
 	"github.com/containerd/containerd/errdefs"
+	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/namespaces"
 	"github.com/containerd/containerd/pkg/oom"
 	oomv1 "github.com/containerd/containerd/pkg/oom/v1"
@@ -44,11 +53,6 @@ import (
 	shimapi "github.com/containerd/containerd/runtime/v2/task"
 	taskAPI "github.com/containerd/containerd/runtime/v2/task"
 	"github.com/containerd/containerd/sys/reaper"
-	runcC "github.com/containerd/go-runc"
-	"github.com/containerd/ttrpc"
-	"github.com/containerd/typeurl"
-	ptypes "github.com/gogo/protobuf/types"
-	"github.com/sirupsen/logrus"
 )
 
 var (
@@ -203,6 +207,7 @@ func (s *service) preStart(c *runc.Container) (handleStarted func(*runc.Containe
 
 // Create a new initial process and container with the underlying OCI runtime
 func (s *service) Create(ctx context.Context, r *taskAPI.CreateTaskRequest) (_ *taskAPI.CreateTaskResponse, err error) {
+	log.G(ctx).Infof("[RuncShim::V2::Create][%v] Shim is Created. Bundle: %v", r.ID, r.Bundle)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -248,6 +253,9 @@ func (s *service) RegisterTTRPC(server *ttrpc.Server) error {
 
 // Start a process
 func (s *service) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.StartResponse, error) {
+	if r.ExecID == "" {
+		log.G(ctx).Infof("[RuncShim::V2::Start][%v] Shim is Started execID: %v", r.ID, r.ExecID)
+	}
 	container, err := s.getContainer(r.ID)
 	if err != nil {
 		return nil, err
@@ -310,6 +318,9 @@ func (s *service) Start(ctx context.Context, r *taskAPI.StartRequest) (*taskAPI.
 // Delete the initial process and container
 func (s *service) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*taskAPI.DeleteResponse, error) {
 	container, err := s.getContainer(r.ID)
+	if r.ExecID == "" {
+		log.G(ctx).Infof("[RuncShim::V2::Delete][%v] Shim is Deleted execID: %v", r.ID, r.ExecID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -338,6 +349,7 @@ func (s *service) Delete(ctx context.Context, r *taskAPI.DeleteRequest) (*taskAP
 
 // Exec an additional process inside the container
 func (s *service) Exec(ctx context.Context, r *taskAPI.ExecProcessRequest) (*ptypes.Empty, error) {
+	log.G(ctx).Infof("[RuncShim::V2::Exec][%v][ExecID: %v] Shim Exec received", r.ID, r.ExecID)
 	container, err := s.getContainer(r.ID)
 	if err != nil {
 		return nil, err
@@ -445,6 +457,9 @@ func (s *service) Resume(ctx context.Context, r *taskAPI.ResumeRequest) (*ptypes
 
 // Kill a process with the provided signal
 func (s *service) Kill(ctx context.Context, r *taskAPI.KillRequest) (*ptypes.Empty, error) {
+	if r.ExecID == "" {
+		log.G(ctx).Infof("[RuncShim::V2::Kill][%v][KillAll? %v] Shim killed with signal %v", r.ID, r.All, r.Signal)
+	}
 	container, err := s.getContainer(r.ID)
 	if err != nil {
 		return nil, err
@@ -516,6 +531,12 @@ func (s *service) Checkpoint(ctx context.Context, r *taskAPI.CheckpointTaskReque
 
 // Update a running container
 func (s *service) Update(ctx context.Context, r *taskAPI.UpdateTaskRequest) (*ptypes.Empty, error) {
+	var resources specs.LinuxResources
+	if err := json.Unmarshal(r.Resources.Value, &resources); err != nil {
+		log.G(ctx).Warnf("[RuncShim::V2::Update][%v] Shim update unmarshal resource failed", r.ID)
+	} else {
+		log.G(ctx).Infof("[RuncShim::V2::Update][%v] Shim update invoked with resources %v", r.ID, resources)
+	}
 	container, err := s.getContainer(r.ID)
 	if err != nil {
 		return nil, err
@@ -528,6 +549,7 @@ func (s *service) Update(ctx context.Context, r *taskAPI.UpdateTaskRequest) (*pt
 
 // Wait for a process to exit
 func (s *service) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAPI.WaitResponse, error) {
+	log.G(ctx).Infof("[RuncShim::V2::Wait][%v] Shim wait invoked execID: %v", r.ID, r.ExecID)
 	container, err := s.getContainer(r.ID)
 	if err != nil {
 		return nil, err
@@ -546,6 +568,7 @@ func (s *service) Wait(ctx context.Context, r *taskAPI.WaitRequest) (*taskAPI.Wa
 
 // Connect returns shim information such as the shim's pid
 func (s *service) Connect(ctx context.Context, r *taskAPI.ConnectRequest) (*taskAPI.ConnectResponse, error) {
+	log.G(ctx).Infof("[RuncShim::V2::Connect][%v] Shim connect invoked", r.ID)
 	var pid int
 	if container, err := s.getContainer(r.ID); err == nil {
 		pid = container.Pid()
@@ -557,6 +580,7 @@ func (s *service) Connect(ctx context.Context, r *taskAPI.ConnectRequest) (*task
 }
 
 func (s *service) Shutdown(ctx context.Context, r *taskAPI.ShutdownRequest) (*ptypes.Empty, error) {
+	log.G(ctx).Infof("[RuncShim::V2::Shutdown][%v] Shim shutdown invoked", r.ID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
