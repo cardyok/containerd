@@ -21,17 +21,21 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 	"sync"
+	"time"
+
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/sirupsen/logrus"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/containerd/containerd/content"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/images"
 	"github.com/containerd/containerd/log"
+	"github.com/containerd/containerd/metrics"
 	"github.com/containerd/containerd/platforms"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/sirupsen/logrus"
-	"golang.org/x/sync/semaphore"
 )
 
 type refKeyPrefix struct{}
@@ -88,7 +92,7 @@ func MakeRefKey(ctx context.Context, desc ocispec.Descriptor) string {
 // FetchHandler returns a handler that will fetch all content into the ingester
 // discovered in a call to Dispatch. Use with ChildrenHandler to do a full
 // recursive fetch.
-func FetchHandler(ingester content.Ingester, fetcher Fetcher) images.HandlerFunc {
+func FetchHandler(ingester content.Ingester, fetcher Fetcher, ref string) images.HandlerFunc {
 	return func(ctx context.Context, desc ocispec.Descriptor) (subdescs []ocispec.Descriptor, err error) {
 		ctx = log.WithLogger(ctx, log.G(ctx).WithFields(logrus.Fields{
 			"digest":    desc.Digest,
@@ -100,13 +104,13 @@ func FetchHandler(ingester content.Ingester, fetcher Fetcher) images.HandlerFunc
 		case images.MediaTypeDockerSchema1Manifest:
 			return nil, fmt.Errorf("%v not supported", desc.MediaType)
 		default:
-			err := fetch(ctx, ingester, fetcher, desc)
+			err := fetch(ctx, ingester, fetcher, desc, ref)
 			return nil, err
 		}
 	}
 }
 
-func fetch(ctx context.Context, ingester content.Ingester, fetcher Fetcher, desc ocispec.Descriptor) error {
+func fetch(ctx context.Context, ingester content.Ingester, fetcher Fetcher, desc ocispec.Descriptor, ref string) error {
 	log.G(ctx).Debug("fetch")
 
 	cw, err := content.OpenWriter(ctx, ingester, content.WithRef(MakeRefKey(ctx, desc)), content.WithDescriptor(desc))
@@ -143,6 +147,17 @@ func fetch(ctx context.Context, ingester content.Ingester, fetcher Fetcher, desc
 		return err
 	}
 	defer rc.Close()
+
+	runtimeStart := time.Now()
+	u, _ := url.Parse("dummy://" + ref)
+	defer func() {
+		log.G(ctx).Debugf("Pull layer %s from %s size %v took %v", desc.Digest.String(), ref, desc.Size, time.Since(runtimeStart))
+		mbs := float64(desc.Size) / (1024 * 1024)
+		if mbs >= 1 {
+			speed := mbs / time.Since(runtimeStart).Seconds()
+			metrics.ImagePullSpeed.WithLabelValues(u.Host).Observe(speed)
+		}
+	}()
 
 	return content.Copy(ctx, cw, rc, desc.Size, desc.Digest)
 }

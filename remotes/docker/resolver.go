@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 
 	digest "github.com/opencontainers/go-digest"
@@ -35,6 +36,7 @@ import (
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/images"
 	"github.com/containerd/containerd/log"
+	"github.com/containerd/containerd/metrics"
 	"github.com/containerd/containerd/reference"
 	"github.com/containerd/containerd/remotes"
 	"github.com/containerd/containerd/remotes/docker/schema1"
@@ -233,7 +235,7 @@ func (r *countingReader) Read(p []byte) (int, error) {
 
 var _ remotes.Resolver = &dockerResolver{}
 
-func (r *dockerResolver) Resolve(ctx context.Context, ref string) (string, ocispec.Descriptor, error) {
+func (r *dockerResolver) Resolve(ctx context.Context, ref string) (_ string, _ ocispec.Descriptor, retErr error) {
 	base, err := r.resolveDockerBase(ref)
 	if err != nil {
 		return "", ocispec.Descriptor{}, err
@@ -244,10 +246,11 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (string, ocisp
 	}
 
 	var (
-		hostErrs []error
-		paths    [][]string
-		dgst     = refspec.Digest()
-		caps     = HostCapabilityPull
+		hostErrs        []error
+		paths           [][]string
+		firstStatusCode int
+		dgst            = refspec.Digest()
+		caps            = HostCapabilityPull
 	)
 
 	if dgst != "" {
@@ -277,6 +280,13 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (string, ocisp
 	if err != nil {
 		return "", ocispec.Descriptor{}, err
 	}
+
+	defer func() {
+		if retErr != nil {
+			failedHost := strings.Split(base.refspec.Locator, "/")
+			metrics.ImageResolveFailure.WithValues(failedHost[0], strings.Join(failedHost[1:], "/"), strconv.Itoa(firstStatusCode)).Inc()
+		}
+	}()
 
 	for _, u := range paths {
 		for i, host := range hosts {
@@ -310,6 +320,9 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (string, ocisp
 			}
 			resp.Body.Close() // don't care about body contents.
 
+			if firstStatusCode == 0 {
+				firstStatusCode = resp.StatusCode
+			}
 			if resp.StatusCode > 299 {
 				if resp.StatusCode == http.StatusNotFound {
 					log.G(ctx).Info("trying next host - response was http.StatusNotFound")

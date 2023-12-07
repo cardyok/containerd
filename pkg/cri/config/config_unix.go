@@ -97,6 +97,7 @@ func DefaultConfig() PluginConfig {
 		},
 		SandboxImage:                     "registry.k8s.io/pause:3.6",
 		StatsCollectPeriod:               10,
+		MetricsCollectPeriod:             20,
 		SystemdCgroup:                    false,
 		MaxContainerLogLineSize:          16 * 1024,
 		MaxContainerLogIOSize:            0,

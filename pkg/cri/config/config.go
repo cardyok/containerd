@@ -271,6 +271,8 @@ type PluginConfig struct {
 	SandboxImage string `toml:"sandbox_image" json:"sandboxImage"`
 	// StatsCollectPeriod is the period (in seconds) of snapshots stats collection.
 	StatsCollectPeriod int `toml:"stats_collect_period" json:"statsCollectPeriod"`
+	// MetricsCollectPeriod is the period (in seconds) of metrics collection.
+	MetricsCollectPeriod int `toml:"metrics_collect_period" json:"metricsCollectPeriod"`
 	// SystemdCgroup enables systemd cgroup support.
 	// This only works for runtime type "io.containerd.runtime.v1.linux".
 	// DEPRECATED: config runc runtime handler instead. Remove when shim v1 is deprecated.

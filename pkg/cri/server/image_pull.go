@@ -41,16 +41,16 @@ import (
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/errdefs"
 	containerdimages "github.com/containerd/containerd/images"
+	"github.com/containerd/containerd/labels"
 	"github.com/containerd/containerd/log"
+	"github.com/containerd/containerd/metrics"
+	criconfig "github.com/containerd/containerd/pkg/cri/config"
 	crilabels "github.com/containerd/containerd/pkg/cri/labels"
 	snpkg "github.com/containerd/containerd/pkg/snapshotters"
 	"github.com/containerd/containerd/reference"
 	distribution "github.com/containerd/containerd/reference/docker"
 	"github.com/containerd/containerd/remotes/docker"
 	"github.com/containerd/containerd/remotes/docker/config"
-
-	"github.com/containerd/containerd/labels"
-	criconfig "github.com/containerd/containerd/pkg/cri/config"
 )
 
 // For image management:
@@ -95,13 +95,24 @@ import (
 // contents are missing but snapshots are ready, is the image still "READY"?
 
 // PullImage pulls an image with authentication config.
-func (c *criService) PullImage(ctx context.Context, r *runtime.PullImageRequest) (*runtime.PullImageResponse, error) {
+func (c *criService) PullImage(ctx context.Context, r *runtime.PullImageRequest) (_ *runtime.PullImageResponse, retErr error) {
 	imageRef := r.GetImage().GetImage()
 	namedRef, err := distribution.ParseDockerRef(imageRef)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse image reference %q: %w", imageRef, err)
 	}
 	ref := namedRef.String()
+	statHost := strings.Split(ref, "/")
+	metrics.InProgressPulls.WithValues(statHost[0], strings.Join(statHost[1:], "/")).Inc()
+	defer metrics.InProgressPulls.WithValues(statHost[0], strings.Join(statHost[1:], "/")).Dec()
+	defer func() {
+		if retErr != nil {
+			metrics.ImagePulls.WithValues("failed", strings.Split(retErr.Error(), ":")[0], statHost[0]).Inc()
+		} else {
+			metrics.ImagePulls.WithValues("succeeded", "succeeded", statHost[0]).Inc()
+		}
+	}()
+
 	if ref != imageRef {
 		log.G(ctx).Debugf("PullImage using normalized image ref: %q", ref)
 	}
@@ -188,7 +199,7 @@ func (c *criService) PullImage(ctx context.Context, r *runtime.PullImageRequest)
 
 	labels := c.getLabels(ctx, ref)
 
-	//TODO(Chaofeng): very hack method, need to figure out a more elegant way
+	// TODO(Chaofeng): very hack method, need to figure out a more elegant way
 	snapshotter := c.config.ContainerdConfig.Snapshotter
 	if sandboxConfig != nil {
 		snapshotResult, err := c.getSnapshotterFromSandbox(ctx, sandboxConfig)

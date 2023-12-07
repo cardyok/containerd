@@ -31,6 +31,7 @@ import (
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/images"
 	"github.com/containerd/containerd/log"
+	"github.com/containerd/containerd/metrics"
 )
 
 type dockerFetcher struct {
@@ -90,6 +91,10 @@ func (r dockerFetcher) Fetch(ctx context.Context, desc ocispec.Descriptor) (io.R
 				return nil, err
 			}
 
+			if desc.Size >= 0 {
+				metrics.ImagePulledSize.WithValues(host.HostName).Inc(float64(desc.Size) / (1024 * 1024 * 1024))
+				metrics.HostPulledSize.WithValues(host.Host).Inc(float64(desc.Size) / (1024 * 1024 * 1024))
+			}
 			return rc, nil
 		}
 
@@ -117,6 +122,10 @@ func (r dockerFetcher) Fetch(ctx context.Context, desc ocispec.Descriptor) (io.R
 					continue // try another host
 				}
 
+				if desc.Size >= 0 {
+					metrics.ImagePulledSize.WithValues(host.HostName).Inc(float64(desc.Size) / (1024 * 1024 * 1024))
+					metrics.HostPulledSize.WithValues(host.Host).Inc(float64(desc.Size) / (1024 * 1024 * 1024))
+				}
 				return rc, nil
 			}
 
@@ -142,6 +151,10 @@ func (r dockerFetcher) Fetch(ctx context.Context, desc ocispec.Descriptor) (io.R
 				continue // try another host
 			}
 
+			if desc.Size >= 0 {
+				metrics.ImagePulledSize.WithValues(host.HostName).Inc(float64(desc.Size) / (1024 * 1024 * 1024))
+				metrics.HostPulledSize.WithValues(host.Host).Inc(float64(desc.Size) / (1024 * 1024 * 1024))
+			}
 			return rc, nil
 		}
 

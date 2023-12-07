@@ -19,11 +19,13 @@ package version
 import (
 	"context"
 
-	api "github.com/containerd/containerd/api/services/version/v1"
-	"github.com/containerd/containerd/plugin"
-	ctrdversion "github.com/containerd/containerd/version"
 	ptypes "github.com/gogo/protobuf/types"
 	"google.golang.org/grpc"
+
+	api "github.com/containerd/containerd/api/services/version/v1"
+	"github.com/containerd/containerd/metrics"
+	"github.com/containerd/containerd/plugin"
+	ctrdversion "github.com/containerd/containerd/version"
 )
 
 var _ api.VersionServer = &service{}
@@ -34,6 +36,7 @@ func init() {
 		ID:     "version",
 		InitFn: initFunc,
 	})
+	metrics.ContainerdVersion.WithValues(ctrdversion.Version).Inc()
 }
 
 func initFunc(ic *plugin.InitContext) (interface{}, error) {

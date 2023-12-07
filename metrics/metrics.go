@@ -19,10 +19,38 @@ package metrics
 import (
 	"github.com/containerd/containerd/version"
 	goMetrics "github.com/docker/go-metrics"
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+var (
+	ContainerdVersion   goMetrics.LabeledCounter
+	ImagePulls          goMetrics.LabeledCounter
+	ImagePulledSize     goMetrics.LabeledCounter
+	HostPulledSize      goMetrics.LabeledCounter
+	InProgressPulls     goMetrics.LabeledGauge
+	ImageResolveFailure goMetrics.LabeledCounter
+	ImagePullSpeed      *prometheus.HistogramVec
 )
 
 func init() {
-	ns := goMetrics.NewNamespace("containerd", "", nil)
+	ns := goMetrics.NewNamespace("containerd", "containerd", nil)
+
+	ContainerdVersion = ns.NewLabeledCounter("containerd_version", "containerd version summary", "containerd_version")
+
+	ImagePulledSize = ns.NewLabeledCounter("proxy_throughput_summary", "traffic summary for each proxy", "proxy")
+	HostPulledSize = ns.NewLabeledCounter("host_throughput_summary", "traffic summary for each host", "host")
+	ImagePulls = ns.NewLabeledCounter("image_pulls", "succeeded and failed counters", "status", "error", "host")
+	ImageResolveFailure = ns.NewLabeledCounter("image_resolve_failure", "image resolve failure count", "registry", "path", "code")
+	InProgressPulls = ns.NewLabeledGauge("in_progress_pull", "in progress image pulls", goMetrics.Total, "registry", "path")
+	ImagePullSpeed = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Buckets:   []float64{0.1, 1, 5, 10, 30},
+		Namespace: "containerd",
+		Subsystem: "containerd",
+		Name:      "image_pull_time",
+		Help:      "average time to pull 1MB image",
+	}, []string{"hosts"})
+	ns.Add(ImagePullSpeed)
+
 	c := ns.NewLabeledCounter("build_info", "containerd build information", "version", "revision")
 	c.WithValues(version.Version, version.Revision).Inc()
 	goMetrics.Register(ns)

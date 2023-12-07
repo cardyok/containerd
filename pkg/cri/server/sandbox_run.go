@@ -355,6 +355,10 @@ func (c *criService) RunPodSandbox(ctx context.Context, r *runtime.RunPodSandbox
 		// calls to network namespace of the pod to query the IP of the veth interface on every
 		// SandboxStatus request.
 		if err := c.setupPodNetwork(ctx, &sandbox); err != nil {
+			if strings.Contains(err.Error(), context.DeadlineExceeded.Error()) {
+				sandboxCreateNetworkTimeoutCounter.Inc()
+			}
+			sandboxCreateNetworkFailureCounter.Inc()
 			return nil, fmt.Errorf("failed to setup network for sandbox %q: %w", id, err)
 		}
 

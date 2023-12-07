@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"strings"
 	"syscall"
 	"time"
 
@@ -90,6 +91,9 @@ func (c *criService) ExecSync(ctx context.Context, r *runtime.ExecSyncRequest) (
 		timeout: time.Duration(r.GetTimeout()) * time.Second,
 	})
 	if err != nil {
+		if strings.Contains(err.Error(), context.DeadlineExceeded.Error()) {
+			containerExecsyncTimeout.Inc()
+		}
 		return nil, fmt.Errorf("failed to exec in container: %w", err)
 	}
 

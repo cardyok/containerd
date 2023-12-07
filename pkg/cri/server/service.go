@@ -287,6 +287,14 @@ func (c *criService) Run(ready func()) error {
 	)
 	snapshotsSyncer.start()
 
+	metricsSyncer := newMetricsSyncer(
+		c.containerStore,
+		c.sandboxStore,
+		c.imageStore,
+		time.Duration(c.config.MetricsCollectPeriod)*time.Second,
+	)
+	metricsSyncer.start()
+
 	// Start CNI network conf syncers
 	cniNetConfMonitorErrCh := make(chan error, len(c.cniNetConfMonitor))
 	var netSyncGroup sync.WaitGroup

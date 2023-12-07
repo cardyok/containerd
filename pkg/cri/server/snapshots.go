@@ -107,7 +107,7 @@ func (s *snapshotsSyncer) sync() error {
 			usage, err := s.snapshotter[snName].Usage(ctx, info.Name)
 			if err != nil {
 				if !errdefs.IsNotFound(err) {
-					logrus.WithError(err).Errorf("Failed to get usage for snapshot %q", info.Name)
+					logrus.WithError(err).Debugf("Failed to get usage for snapshot %q", info.Name)
 				}
 				continue
 			}
