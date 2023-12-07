@@ -20,9 +20,14 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/sirupsen/logrus"
+	"github.com/urfave/cli"
+	"google.golang.org/grpc/grpclog"
+
 	"github.com/containerd/containerd/cmd/ctr/commands/containers"
 	"github.com/containerd/containerd/cmd/ctr/commands/content"
 	"github.com/containerd/containerd/cmd/ctr/commands/events"
+	"github.com/containerd/containerd/cmd/ctr/commands/hotfix"
 	"github.com/containerd/containerd/cmd/ctr/commands/images"
 	"github.com/containerd/containerd/cmd/ctr/commands/install"
 	"github.com/containerd/containerd/cmd/ctr/commands/leases"
@@ -37,9 +42,6 @@ import (
 	"github.com/containerd/containerd/defaults"
 	"github.com/containerd/containerd/namespaces"
 	"github.com/containerd/containerd/version"
-	"github.com/sirupsen/logrus"
-	"github.com/urfave/cli"
-	"google.golang.org/grpc/grpclog"
 )
 
 var extraCmds = []cli.Command{}
@@ -113,6 +115,7 @@ containerd CLI
 		snapshots.Command,
 		tasks.Command,
 		install.Command,
+		hotfix.Command,
 		ociCmd.Command,
 	}, extraCmds...)
 	app.Before = func(context *cli.Context) error {

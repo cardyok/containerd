@@ -2078,6 +2078,35 @@ file {
   syntax: "proto3"
 }
 file {
+  name: "github.com/containerd/containerd/api/services/hotfix/v1/hotfix.proto"
+  package: "containerd.services.hotfix.v1"
+  dependency: "google/protobuf/empty.proto"
+  dependency: "gogoproto/gogo.proto"
+  message_type {
+    name: "ChangeLogLevelRequest"
+    field {
+      name: "log_level"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "logLevel"
+    }
+  }
+  service {
+    name: "Hotfix"
+    method {
+      name: "ChangeLogLevel"
+      input_type: ".containerd.services.hotfix.v1.ChangeLogLevelRequest"
+      output_type: ".google.protobuf.Empty"
+    }
+  }
+  options {
+    go_package: "github.com/containerd/containerd/api/services/hotfix/v1;hotfix"
+  }
+  weak_dependency: 1
+  syntax: "proto3"
+}
+file {
   name: "github.com/containerd/containerd/api/services/images/v1/images.proto"
   package: "containerd.services.images.v1"
   dependency: "gogoproto/gogo.proto"

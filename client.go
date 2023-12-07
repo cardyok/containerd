@@ -27,10 +27,21 @@ import (
 	"sync"
 	"time"
 
+	"github.com/containerd/typeurl"
+	ptypes "github.com/gogo/protobuf/types"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	specs "github.com/opencontainers/runtime-spec/specs-go"
+	"golang.org/x/sync/semaphore"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health/grpc_health_v1"
+
 	containersapi "github.com/containerd/containerd/api/services/containers/v1"
 	contentapi "github.com/containerd/containerd/api/services/content/v1"
 	diffapi "github.com/containerd/containerd/api/services/diff/v1"
 	eventsapi "github.com/containerd/containerd/api/services/events/v1"
+	"github.com/containerd/containerd/api/services/hotfix/v1"
 	imagesapi "github.com/containerd/containerd/api/services/images/v1"
 	introspectionapi "github.com/containerd/containerd/api/services/introspection/v1"
 	leasesapi "github.com/containerd/containerd/api/services/leases/v1"
@@ -57,15 +68,6 @@ import (
 	"github.com/containerd/containerd/services/introspection"
 	"github.com/containerd/containerd/snapshots"
 	snproxy "github.com/containerd/containerd/snapshots/proxy"
-	"github.com/containerd/typeurl"
-	ptypes "github.com/gogo/protobuf/types"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	specs "github.com/opencontainers/runtime-spec/specs-go"
-	"golang.org/x/sync/semaphore"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/backoff"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/health/grpc_health_v1"
 )
 
 func init() {
@@ -695,6 +697,13 @@ func (c *Client) VersionService() versionservice.VersionClient {
 	return versionservice.NewVersionClient(c.conn)
 }
 
+// HotfixService returns the underlying HotfixClient
+func (c *Client) HotfixService() hotfix.HotfixClient {
+	c.connMu.Lock()
+	defer c.connMu.Unlock()
+	return hotfix.NewHotfixClient(c.conn)
+}
+
 // Conn returns the underlying GRPC connection object
 func (c *Client) Conn() *grpc.ClientConn {
 	c.connMu.Lock()
@@ -726,6 +735,20 @@ func (c *Client) Version(ctx context.Context) (Version, error) {
 		Version:  response.Version,
 		Revision: response.Revision,
 	}, nil
+}
+
+// ChangeLogLevel changes the log level of containerd main process
+func (c *Client) ChangeLogLevel(ctx context.Context, logLevel string) error {
+	c.connMu.Lock()
+	if c.conn == nil {
+		c.connMu.Unlock()
+		return fmt.Errorf("no grpc connection available: %w", errdefs.ErrUnavailable)
+	}
+	c.connMu.Unlock()
+	_, err := c.HotfixService().ChangeLogLevel(ctx, &hotfix.ChangeLogLevelRequest{
+		LogLevel: logLevel,
+	})
+	return err
 }
 
 // ServerInfo represents the introspected server information
