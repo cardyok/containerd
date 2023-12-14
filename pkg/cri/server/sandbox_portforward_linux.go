@@ -37,12 +37,30 @@ func (c *criService) portForward(ctx context.Context, id string, port int32, str
 		return fmt.Errorf("failed to find sandbox %q in store: %w", id, err)
 	}
 
+	ipForward := false
+	targetIP := "localhost"
+	func() {
+		if annotations := s.Config.GetAnnotations(); annotations != nil {
+			portStr, ok := annotations[portForwardInterface]
+			if !ok || s.CNIResult == nil {
+				return
+			}
+			if allow, ok := c.config.PortForwardInterfaceCheckList[portStr]; !ok || !allow {
+				return
+			}
+			cniConfig, ok := s.CNIResult.Interfaces[portStr]
+			if ok && cniConfig != nil && len(cniConfig.IPConfigs) != 0 && cniConfig.IPConfigs[0] != nil {
+				targetIP = cniConfig.IPConfigs[0].IP.String()
+				ipForward = true
+			}
+		}
+	}()
 	var netNSDo func(func(ns.NetNS) error) error
 	// netNSPath is the network namespace path for logging.
 	var netNSPath string
 	securityContext := s.Config.GetLinux().GetSecurityContext()
 	hostNet := securityContext.GetNamespaceOptions().GetNetwork() == runtime.NamespaceMode_NODE
-	if !hostNet {
+	if !hostNet && !ipForward {
 		if closed, err := s.NetNS.Closed(); err != nil {
 			return fmt.Errorf("failed to check netwok namespace closed for sandbox %q: %w", id, err)
 		} else if closed {
@@ -72,12 +90,12 @@ func (c *criService) portForward(ctx context.Context, id string, port int32, str
 		// We try IPv4 first to keep current behavior and we fallback to IPv6 if the connection fails.
 		// xref https://github.com/golang/go/issues/44922
 		var conn net.Conn
-		conn, err := net.Dial("tcp4", fmt.Sprintf("localhost:%d", port))
+		conn, err := net.Dial("tcp4", fmt.Sprintf("%s:%d", targetIP, port))
 		if err != nil {
 			var errV6 error
-			conn, errV6 = net.Dial("tcp6", fmt.Sprintf("localhost:%d", port))
+			conn, errV6 = net.Dial("tcp6", fmt.Sprintf("%s:%d", targetIP, port))
 			if errV6 != nil {
-				return fmt.Errorf("failed to connect to localhost:%d inside namespace %q, IPv4: %v IPv6 %v ", port, id, err, errV6)
+				return fmt.Errorf("failed to connect to %s:%d inside namespace %q, IPv4: %v IPv6 %v ", targetIP, port, id, err, errV6)
 			}
 		}
 		defer conn.Close()

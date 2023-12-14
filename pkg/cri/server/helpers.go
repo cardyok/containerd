@@ -105,6 +105,9 @@ const (
 	// interfaceIPsAnnotationKey is used as the key in sandbox config annotations,
 	// the value is the serialized string of interface:ipArray map.
 	interfaceIPsAnnotationKey = alibabaCloud + "/interface-ips"
+	// portForwardInterface is used as the key in sandbox config annotations,
+	// the value is the interface name to use for port forwarding.
+	portForwardInterface = alibabaCloud + "/port-forward-interface"
 
 	// aliyunKubernetes is default prefix for aliyun annotations
 	aliyunKubernetes = "k8s.aliyun.com/"

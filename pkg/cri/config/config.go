@@ -338,8 +338,10 @@ type PluginConfig struct {
 	// and if it is not overwritten by PodSandboxConfig
 	// Note that currently default is set to disabled but target change it in future together with EnableUnprivilegedPorts
 	EnableUnprivilegedICMP bool `toml:"enable_unprivileged_icmp" json:"enableUnprivilegedICMP"`
-	//DynamicCRIConfPath defines file for containerd to dynamically load cri config
+	// DynamicCRIConfPath defines file for containerd to dynamically load cri config
 	DynamicCRIConfPath string `toml:"dynamic_cri_conf_path" json:"dynamicCriConfPath"`
+	// PortForwardInterfaceCheckList defines a list of interfaces that are allowed to be used for port forwarding
+	PortForwardInterfaceCheckList map[string]bool `toml:"port_forward_interface_check_list" json:"portForwardInterfaceCheckList"`
 }
 
 // X509KeyPairStreaming contains the x509 configuration for streaming
