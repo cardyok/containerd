@@ -300,7 +300,7 @@ func (c *criService) containerSpec(
 
 		status := targetContainer.Status.Get()
 		targetPid = status.Pid
-		if ociRuntime.Type == plugin.RuntimeRundV2 {
+		if strings.HasPrefix(ociRuntime.Type, plugin.RuntimeRundV2) {
 			specOpts = append(specOpts, customopts.WithAnnotation(annotations.RundEphemeralContainer, nsOpts.TargetId))
 		}
 	}

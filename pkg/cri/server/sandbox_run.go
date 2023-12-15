@@ -183,7 +183,7 @@ func (c *criService) RunPodSandbox(ctx context.Context, r *runtime.RunPodSandbox
 	labels := snapshots.FilterInheritedLabels(config.Annotations)
 	// set default active quota
 	if config.Annotations[overlay.SnapshotterLabelOverlayActiveQuota] == "" &&
-		ociRuntime.Type == plugin.RuntimeRundV2 &&
+		strings.HasPrefix(ociRuntime.Type, plugin.RuntimeRundV2) &&
 		snapshotterConfig.DefaultActiveQuota != "" {
 		labels[overlay.SnapshotterLabelOverlayActiveQuota] = snapshotterConfig.DefaultActiveQuota
 	}
