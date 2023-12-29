@@ -26,10 +26,11 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/context/ctxhttp"
+
 	"github.com/containerd/containerd/log"
 	remoteserrors "github.com/containerd/containerd/remotes/errors"
 	"github.com/containerd/containerd/version"
-	"golang.org/x/net/context/ctxhttp"
 )
 
 var (
@@ -39,13 +40,16 @@ var (
 )
 
 // GenerateTokenOptions generates options for fetching a token based on a challenge
-func GenerateTokenOptions(ctx context.Context, host, username, secret string, c Challenge) (TokenOptions, error) {
+func GenerateTokenOptions(ctx context.Context, host, username, secret string, c Challenge, schema string) (TokenOptions, error) {
 	realm, ok := c.Parameters["realm"]
 	if !ok {
 		return TokenOptions{}, errors.New("no realm specified for token auth challenge")
 	}
 
 	realmURL, err := url.Parse(realm)
+	if schema != "" {
+		realmURL.Scheme = schema
+	}
 	if err != nil {
 		return TokenOptions{}, fmt.Errorf("invalid token auth challenge realm: %w", err)
 	}

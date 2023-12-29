@@ -79,7 +79,7 @@ type Authorizer interface {
 	// that may have led to the 401.
 	//
 	// If response is not handled, returns `ErrNotImplemented`
-	AddResponses(context.Context, []*http.Response) error
+	AddResponses(context.Context, []*http.Response, string) error
 }
 
 // ResolverOptions are used to configured a new Docker register resolver
@@ -641,7 +641,7 @@ func (r *request) retryRequest(ctx context.Context, responses []*http.Response) 
 	case http.StatusUnauthorized:
 		log.G(ctx).WithField("header", last.Header.Get("WWW-Authenticate")).Debug("Unauthorized")
 		if r.host.Authorizer != nil {
-			if err := r.host.Authorizer.AddResponses(ctx, responses); err == nil {
+			if err := r.host.Authorizer.AddResponses(ctx, responses, r.host.Scheme); err == nil {
 				return true, nil
 			} else if !errdefs.IsNotImplemented(err) {
 				return false, err

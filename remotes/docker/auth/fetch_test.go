@@ -65,7 +65,7 @@ func TestGenerateTokenOptions(t *testing.T) {
 					"scope":   tc.scope,
 				},
 			}
-			options, err := GenerateTokenOptions(context.Background(), "host", tc.username, tc.secret, c)
+			options, err := GenerateTokenOptions(context.Background(), "host", tc.username, tc.secret, c, "")
 			if err != nil {
 				t.Fatalf("unexpected error %v", err)
 			}
@@ -91,7 +91,7 @@ func TestGenerateTokenOptions(t *testing.T) {
 				"scope":   "repository:foo/bar:pull,push",
 			},
 		}
-		_, err := GenerateTokenOptions(context.Background(), "host", "username", "secret", c)
+		_, err := GenerateTokenOptions(context.Background(), "host", "username", "secret", c, "")
 		if err == nil {
 			t.Fatal("expected an err and got nil")
 		}
@@ -106,7 +106,7 @@ func TestGenerateTokenOptions(t *testing.T) {
 				"scope":   "repository:foo/bar:pull,push",
 			},
 		}
-		_, err := GenerateTokenOptions(context.Background(), "host", "username", "secret", c)
+		_, err := GenerateTokenOptions(context.Background(), "host", "username", "secret", c, "")
 		if err == nil {
 			t.Fatal("expected an err and got nil")
 		}

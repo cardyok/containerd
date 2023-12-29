@@ -149,7 +149,7 @@ func (a *dockerAuthorizer) getAuthHandler(host string) *authHandler {
 	return a.handlers[host]
 }
 
-func (a *dockerAuthorizer) AddResponses(ctx context.Context, responses []*http.Response) error {
+func (a *dockerAuthorizer) AddResponses(ctx context.Context, responses []*http.Response, schema string) error {
 	last := responses[len(responses)-1]
 	host := last.Request.URL.Host
 
@@ -184,7 +184,7 @@ func (a *dockerAuthorizer) AddResponses(ctx context.Context, responses []*http.R
 				}
 			}
 
-			common, err := auth.GenerateTokenOptions(ctx, host, username, secret, c)
+			common, err := auth.GenerateTokenOptions(ctx, host, username, secret, c, schema)
 			if err != nil {
 				return err
 			}
