@@ -41,7 +41,6 @@ import (
 	containerstore "github.com/containerd/containerd/pkg/cri/store/container"
 	"github.com/containerd/containerd/pkg/cri/util"
 	ctrdutil "github.com/containerd/containerd/pkg/cri/util"
-	"github.com/containerd/containerd/plugin"
 	"github.com/containerd/containerd/snapshots"
 	"github.com/containerd/containerd/snapshots/overlay"
 )
@@ -213,14 +212,6 @@ func (c *criService) CreateContainer(ctx context.Context, r *runtime.CreateConta
 	snapshotterConfig, err := c.getSnapshotterConfig(snapshotter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sandbox snapshotter config: %w", err)
-	}
-
-	// set default active quota
-	if config.Annotations[overlay.SnapshotterLabelOverlayActiveQuota] == "" &&
-		ociRuntime.Type == plugin.RuntimeRundV2 &&
-		snapshotterConfig.DefaultActiveQuota != "" {
-		snapshotterOpts = append(snapshotterOpts,
-			snapshots.WithLabels(map[string]string{overlay.SnapshotterLabelOverlayActiveQuota: snapshotterConfig.DefaultActiveQuota}))
 	}
 
 	// Set snapshotter before any other options.
