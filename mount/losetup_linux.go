@@ -33,7 +33,9 @@ const (
 	loopControlPath = "/dev/loop-control"
 	loopDevFormat   = "/dev/loop%d"
 
-	ebusyString = "device or resource busy"
+	ebusyString  = "device or resource busy"
+	enoentString = "no such file or directory"
+	eaccesString = "permission denied"
 )
 
 // LoopParams parameters to control loop device setup
@@ -85,7 +87,7 @@ func setupLoopDev(backingFile, loopDev string, param LoopParams) (_ *os.File, re
 	}
 	defer back.Close()
 
-	loop, err := os.OpenFile(loopDev, flags, 0)
+	loop, err := openLoopDevice(loopDev, os.O_RDWR, 0)
 	if err != nil {
 		return nil, fmt.Errorf("could not open loop device: %s: %w", loopDev, err)
 	}
@@ -132,6 +134,24 @@ func setupLoopDev(backingFile, loopDev string, param LoopParams) (_ *os.File, re
 
 	_, _, _ = ioctl(loop.Fd(), unix.LOOP_CLR_FD, 0)
 	return nil, fmt.Errorf("failed to set loop device info: %v", err)
+}
+
+// openLoopDevice opens loop device and returns
+// the file handle for the loop device. The caller is responsible for
+// closing the file handle. Retry logic migrated from unix-linux
+func openLoopDevice(name string, flag int, perm os.FileMode) (loop *os.File, retErr error) {
+	for retry := 1; retry < 16; retry++ {
+		loop, retErr = os.OpenFile(name, flag, perm)
+		if retErr == nil {
+			return loop, nil
+		}
+		if strings.Contains(retErr.Error(), eaccesString) || strings.Contains(retErr.Error(), enoentString) {
+			time.Sleep(time.Millisecond * time.Duration(25))
+			continue
+		}
+		return
+	}
+	return
 }
 
 // setupLoop looks for (and possibly creates) a free loop device, and
