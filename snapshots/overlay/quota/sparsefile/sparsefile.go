@@ -57,7 +57,7 @@ func (q *sparseFileQuota) Setup(ctx context.Context, target string, size int, op
 		if err != nil {
 			return fmt.Errorf("failed to create image file: %s, size %d, err: %w", sparseFile, size, err)
 		}
-		err = q.formatImageFile(sparseFile)
+		err = q.formatImageFile(ctx, sparseFile, size)
 		if err != nil {
 			return fmt.Errorf("failed to format image file: %s, err: %w", sparseFile, err)
 		}

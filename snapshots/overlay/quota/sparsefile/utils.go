@@ -39,20 +39,24 @@ func (q *sparseFileQuota) createImageFile(img string, size int) (err error) {
 	return nil
 }
 
-func (q *sparseFileQuota) formatImageFile(img string) error {
+func (q *sparseFileQuota) formatImageFile(ctx context.Context, img string, size int) error {
+	gbSize := size / 1024 / 1024 / 1024
 	if q.fsType != "ext4" {
 		return fmt.Errorf("unsupport %s, only support ext4 file system now", q.fsType)
 	}
 	args := []string{
 		img,
 		"-F",
+		"-N",
+		// Set inode size proportional to sparse file size to reduce storage size used by fs metadata
+		fmt.Sprintf("%d", 16384*gbSize),
 		"-E",
-		//TODO(Chaofeng): Disable lazy init to mitigate race condition by compromising on performance.
-		// inode number hardcoded 100000 in the future?
+		// Disable lazy init to mitigate race condition by compromising on performance.
 		"nodiscard,lazy_itable_init=0",
 		"-O",
 		"^has_journal",
 	}
+	log.G(ctx).Debugf("mkfs rw.img with command: %v", args)
 	output, err := exec.Command("mkfs.ext4", args...).CombinedOutput()
 	if err != nil {
 		return errors.Wrapf(err, "failed to write fs:\n%s", string(output))
