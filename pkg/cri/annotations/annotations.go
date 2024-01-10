@@ -105,6 +105,8 @@ const (
 
 	// RundStorageIsolation is annotation specifying rund should not use builtin storage
 	RundStorageIsolation = "alibabacloud.com/enable-host-custom-storage"
+	// LegacyRundStorageIsolation is legacy annotation specifying rund should not use builtin storage
+	LegacyRundStorageIsolation = "io.katacontainers.config.runtime.enable_host_custom_storage"
 	// RundEphemeralContainer is annotation specifying ephemeral container id for rund
 	RundEphemeralContainer = "io.katacontainers.shared_pidns"
 )

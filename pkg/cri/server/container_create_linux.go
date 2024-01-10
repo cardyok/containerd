@@ -276,7 +276,7 @@ func (c *criService) containerSpec(
 	_, activeQuotaSpecified := config.Annotations[overlay.SnapshotterLabelOverlayActiveQuota]
 	for pKey, pValue := range getPassthroughAnnotations(sandboxConfig.Annotations,
 		ociRuntime.PodAnnotations) {
-		if pKey == annotations.RundStorageIsolation && !activeQuotaSpecified {
+		if (pKey == annotations.RundStorageIsolation || pKey == annotations.LegacyRundStorageIsolation) && !activeQuotaSpecified {
 			continue
 		}
 		specOpts = append(specOpts, customopts.WithAnnotation(pKey, pValue))
