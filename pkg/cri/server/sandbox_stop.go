@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -68,10 +69,20 @@ func (c *criService) stopPodSandbox(ctx context.Context, sandbox sandboxstore.Sa
 		// Forcibly stop the container. Do not use `StopContainer`, because it introduces a race
 		// if a container is removed after list.
 		if err := c.stopContainer(ctx, container, 0); err != nil {
+			if !strings.Contains(sandbox.RuntimeHandler, "rund") {
+				return fmt.Errorf("failed to stop container %q: %w", container.ID, err)
+			}
 			if !strings.Contains(err.Error(), "context deadline exceeded") {
 				return fmt.Errorf("failed to stop container %q: %w", container.ID, err)
 			}
-			log.G(ctx).Warnf("stop container %q during stop sandbox %q timeout, skip and wait for sandbox force cleanup.", container.ID, id)
+			log.G(ctx).Warnf("stop rund container %q during stop sandbox %q timeout, skip", container.ID, id)
+		} else if container.Metadata.Config != nil {
+			if activePath, ok := container.Metadata.Config.Annotations["containerd.io/snapshot/overlay.active.path"]; ok && filepath.IsAbs(activePath) {
+				volumeMountPath := filepath.Join(activePath, ".rwlayer/volumes")
+				if err := ensureRemoveAll(ctx, volumeMountPath); err != nil {
+					log.G(ctx).Errorf("failed to remove active path volume mount directory %q: %v", volumeMountPath, err)
+				}
+			}
 		}
 	}
 
