@@ -209,10 +209,6 @@ func (c *criService) CreateContainer(ctx context.Context, r *runtime.CreateConta
 	if err != nil {
 		return nil, fmt.Errorf("failed to create container since no snapshotter specified anywhere: %w", err)
 	}
-	snapshotterConfig, err := c.getSnapshotterConfig(snapshotter)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get sandbox snapshotter config: %w", err)
-	}
 
 	// Set snapshotter before any other options.
 	opts := []containerd.NewContainerOpts{

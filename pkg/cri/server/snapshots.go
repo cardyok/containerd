@@ -19,7 +19,6 @@ package server
 import (
 	"context"
 	"fmt"
-	"github.com/containerd/containerd/log"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -124,9 +123,6 @@ func (s *snapshotsSyncer) sync() error {
 				if rootPath, ok := snInfo.Labels["RootPath"]; ok {
 					sn.RootPath = rootPath
 				}
-			}
-			if sn.RootPath == "" {
-				log.G(ctx).Warnf("Snapshot %v has no root path, WritableLayer field in cri will be skipped", info.Name)
 			}
 			s.store[snName].Add(sn)
 		}
