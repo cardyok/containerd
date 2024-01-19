@@ -901,7 +901,15 @@ var memoryMetrics = []*Metric{
 					},
 				}
 			case *v2.Metrics:
-				return nil
+				s, _ := stats.(*v2.Metrics)
+				if s.Memory == nil {
+					return nil
+				}
+				return []value{
+					{
+						v: float64(s.Memory.UsageLimit),
+					},
+				}
 			default:
 				return nil
 			}
@@ -1326,79 +1334,6 @@ var memoryMetrics = []*Metric{
 			}
 		},
 	},
-	{
-		name: "memory_usage_limit",
-		help: "Current memory usage limit (cgroup v2)",
-		unit: metrics.Bytes,
-		vt:   prometheus.GaugeValue,
-		getValues: func(stats interface{}) []value {
-			switch stats.(type) {
-			case *v1.Metrics:
-				return nil
-			case *v2.Metrics:
-				s, _ := stats.(*v2.Metrics)
-				if s.Memory == nil {
-					return nil
-				}
-				return []value{
-					{
-						v: float64(s.Memory.UsageLimit),
-					},
-				}
-			default:
-				return nil
-			}
-		},
-	},
-	{
-		name: "memory_swap_usage",
-		help: "Current swap usage (cgroup v2)",
-		unit: metrics.Bytes,
-		vt:   prometheus.GaugeValue,
-		getValues: func(stats interface{}) []value {
-			switch stats.(type) {
-			case *v1.Metrics:
-				return nil
-			case *v2.Metrics:
-				s, _ := stats.(*v2.Metrics)
-				if s.Memory == nil {
-					return nil
-				}
-				return []value{
-					{
-						v: float64(s.Memory.SwapUsage),
-					},
-				}
-			default:
-				return nil
-			}
-		},
-	},
-	{
-		name: "memory_swap_limit",
-		help: "Current swap usage limit (cgroup v2)",
-		unit: metrics.Bytes,
-		vt:   prometheus.GaugeValue,
-		getValues: func(stats interface{}) []value {
-			switch stats.(type) {
-			case *v1.Metrics:
-				return nil
-			case *v2.Metrics:
-				s, _ := stats.(*v2.Metrics)
-				if s.Memory == nil {
-					return nil
-				}
-				return []value{
-					{
-						v: float64(s.Memory.SwapLimit),
-					},
-				}
-			default:
-				return nil
-			}
-		},
-	},
-
 	{
 		name: "memory_file_mapped",
 		help: "The file_mapped amount",

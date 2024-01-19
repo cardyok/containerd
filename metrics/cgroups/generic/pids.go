@@ -46,7 +46,7 @@ var pidMetrics = []*Metric{
 					},
 				}
 			case *v2.Metrics:
-				s, _ := stats.(*v1.Metrics)
+				s, _ := stats.(*v2.Metrics)
 				if s.Pids == nil {
 					return nil
 				}
@@ -78,7 +78,7 @@ var pidMetrics = []*Metric{
 					},
 				}
 			case *v2.Metrics:
-				s, _ := stats.(*v1.Metrics)
+				s, _ := stats.(*v2.Metrics)
 				if s.Pids == nil {
 					return nil
 				}
