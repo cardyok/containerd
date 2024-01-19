@@ -18,11 +18,18 @@ package archive
 
 import (
 	"archive/tar"
+	"context"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"golang.org/x/sys/unix"
+)
+
+const (
+	TarFileName = "layer.tar"
 )
 
 // AufsConvertWhiteout converts whiteout files for aufs.
@@ -54,4 +61,24 @@ func OverlayConvertWhiteout(hdr *tar.Header, path string) (bool, error) {
 	}
 
 	return true, nil
+}
+
+// ApplyWithPlainWrite writes the layer to a plain file
+func ApplyWithPlainWrite(ctx context.Context, root string, r io.Reader, options ApplyOptions) (size int64, err error) {
+	targetFile := filepath.Join(root, TarFileName)
+	if !filepath.IsAbs(targetFile) {
+		return 0, fmt.Errorf("target tar file path is not absolute: %v", targetFile)
+	}
+
+	file, err := os.Create(targetFile)
+	if err != nil {
+		return 0, fmt.Errorf("failed to open target tar file %v: %w", targetFile, err)
+	}
+	defer file.Close()
+
+	size, err = io.Copy(file, r)
+	if err != nil {
+		return 0, fmt.Errorf("failed to write to target tar file %v: %w", targetFile, err)
+	}
+	return size, nil
 }

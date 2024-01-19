@@ -28,7 +28,7 @@ import (
 	"github.com/containerd/containerd/pkg/userns"
 )
 
-func apply(ctx context.Context, mounts []mount.Mount, r io.Reader) error {
+func apply(ctx context.Context, mounts []mount.Mount, r io.Reader, skipUntar bool) error {
 	switch {
 	case len(mounts) == 1 && mounts[0].Type == "overlay":
 		// OverlayConvertWhiteout (mknod c 0 0) doesn't work in userns.
@@ -45,6 +45,9 @@ func apply(ctx context.Context, mounts []mount.Mount, r io.Reader) error {
 		}
 		opts := []archive.ApplyOpt{
 			archive.WithConvertWhiteout(archive.OverlayConvertWhiteout),
+		}
+		if skipUntar {
+			opts = append(opts, archive.WithApplyFunc(archive.ApplyWithPlainWrite))
 		}
 		if len(parents) > 0 {
 			opts = append(opts, archive.WithParents(parents))
@@ -69,7 +72,11 @@ func apply(ctx context.Context, mounts []mount.Mount, r io.Reader) error {
 		return err
 	}
 	return mount.WithTempMount(ctx, mounts, func(root string) error {
-		_, err := archive.Apply(ctx, root, r)
+		opts := []archive.ApplyOpt{}
+		if skipUntar {
+			opts = append(opts, archive.WithApplyFunc(archive.ApplyWithPlainWrite))
+		}
+		_, err := archive.Apply(ctx, root, r, opts...)
 		return err
 	})
 }

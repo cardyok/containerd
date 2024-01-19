@@ -61,6 +61,14 @@ func WithConvertWhiteout(c ConvertWhiteout) ApplyOpt {
 	}
 }
 
+// WithApplyFunc use the apply function to apply the layer
+func WithApplyFunc(applyFunc func(context.Context, string, io.Reader, ApplyOptions) (int64, error)) ApplyOpt {
+	return func(options *ApplyOptions) error {
+		options.applyFunc = applyFunc
+		return nil
+	}
+}
+
 // WithParents provides parent directories for resolving inherited attributes
 // directory from the filesystem.
 // Inherited attributes are searched from first to last, making the first

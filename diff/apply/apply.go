@@ -22,25 +22,28 @@ import (
 	"io"
 	"time"
 
+	digest "github.com/opencontainers/go-digest"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/sirupsen/logrus"
+
 	"github.com/containerd/containerd/content"
 	"github.com/containerd/containerd/diff"
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/mount"
-	digest "github.com/opencontainers/go-digest"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/sirupsen/logrus"
 )
 
 // NewFileSystemApplier returns an applier which simply mounts
 // and applies diff onto the mounted filesystem.
-func NewFileSystemApplier(cs content.Provider) diff.Applier {
+func NewFileSystemApplier(cs content.Provider, keepUntar []string) diff.Applier {
 	return &fsApplier{
-		store: cs,
+		store:     cs,
+		keepUntar: keepUntar,
 	}
 }
 
 type fsApplier struct {
-	store content.Provider
+	store     content.Provider
+	keepUntar []string
 }
 
 var emptyDesc = ocispec.Descriptor{}
@@ -93,7 +96,15 @@ func (s *fsApplier) Apply(ctx context.Context, desc ocispec.Descriptor, mounts [
 		r: io.TeeReader(processor, digester.Hash()),
 	}
 
-	if err := apply(ctx, mounts, rc); err != nil {
+	skipUntar := true
+	for _, anno := range desc.Annotations {
+		if checkStringSlice(s.keepUntar, anno) {
+			skipUntar = false
+			break
+		}
+	}
+
+	if err := apply(ctx, mounts, rc, skipUntar); err != nil {
 		return emptyDesc, err
 	}
 
@@ -127,4 +138,14 @@ func (rc *readCounter) Read(p []byte) (n int, err error) {
 	n, err = rc.r.Read(p)
 	rc.c += int64(n)
 	return
+}
+
+// checkStringSlice checks whether target exists in src slice.
+func checkStringSlice(src []string, target string) bool {
+	for _, i := range src {
+		if i == target {
+			return true
+		}
+	}
+	return false
 }

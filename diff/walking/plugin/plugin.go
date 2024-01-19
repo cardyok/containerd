@@ -17,6 +17,8 @@
 package plugin
 
 import (
+	"errors"
+
 	"github.com/containerd/containerd/diff"
 	"github.com/containerd/containerd/diff/apply"
 	"github.com/containerd/containerd/diff/walking"
@@ -25,6 +27,12 @@ import (
 	"github.com/containerd/containerd/plugin"
 )
 
+// Config represents configuration for the overlay plugin.
+type Config struct {
+	// SkipUntarTarAnnotations controls whether to skip untar on tar files.
+	KeepUntarTarAnnotations []string `toml:"keep_untar_tar_annotations"`
+}
+
 func init() {
 	plugin.Register(&plugin.Registration{
 		Type: plugin.DiffPlugin,
@@ -32,6 +40,7 @@ func init() {
 		Requires: []plugin.Type{
 			plugin.MetadataPlugin,
 		},
+		Config: &Config{},
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
 			md, err := ic.Get(plugin.MetadataPlugin)
 			if err != nil {
@@ -41,9 +50,14 @@ func init() {
 			ic.Meta.Platforms = append(ic.Meta.Platforms, platforms.DefaultSpec())
 			cs := md.(*metadata.DB).ContentStore()
 
+			config, ok := ic.Config.(*Config)
+			if !ok {
+				return nil, errors.New("invalid walking differ configuration")
+			}
+
 			return diffPlugin{
 				Comparer: walking.NewWalkingDiff(cs),
-				Applier:  apply.NewFileSystemApplier(cs),
+				Applier:  apply.NewFileSystemApplier(cs, config.KeepUntarTarAnnotations),
 			}, nil
 		},
 	})
