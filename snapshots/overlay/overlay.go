@@ -37,9 +37,11 @@ import (
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/snapshots"
+	"github.com/containerd/containerd/snapshots/overlay/overlaybd"
 	"github.com/containerd/containerd/snapshots/overlay/overlayutils"
 	"github.com/containerd/containerd/snapshots/overlay/quota"
 	quotatypes "github.com/containerd/containerd/snapshots/overlay/quota/types"
+	"github.com/containerd/containerd/snapshots/overlay/roDriver"
 	"github.com/containerd/containerd/snapshots/storage"
 )
 
@@ -110,6 +112,7 @@ type snapshotter struct {
 	indexOff      bool
 	userxattr     bool // whether to enable "userxattr" mount option
 	quotaDriver   quotatypes.Quota
+	roDriver      roDriver.RoDriver
 }
 
 func WithQuotaDriver(driver string) Opt {
@@ -157,6 +160,15 @@ func NewSnapshotter(root string, opts ...Opt) (snapshots.Snapshotter, error) {
 	// init upper layer quota driver
 	quotaDriver := quota.New(config.quotaDriver, nil)
 
+	roDriver, err := overlaybd.New()
+	if err != nil {
+		return nil, fmt.Errorf("failed to start overlaybd driver: %v", err)
+	}
+	// ensure overlaybd available
+	if err := overlaybd.SupportsOverlaybd(); err != nil {
+		return nil, err
+	}
+
 	return &snapshotter{
 		root:          root,
 		ms:            ms,
@@ -165,6 +177,7 @@ func NewSnapshotter(root string, opts ...Opt) (snapshots.Snapshotter, error) {
 		indexOff:      supportsIndex(),
 		userxattr:     userxattr,
 		quotaDriver:   quotaDriver,
+		roDriver:      roDriver,
 	}, nil
 }
 
@@ -581,7 +594,7 @@ func (o *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 	}()
 
 	if homePath, err := getActivePath(&base, key); err == nil {
-		//TODO Chaofeng: This section will clear the rwlayer data on specified path to handle malfunctioning machine data leak.
+		// TODO Chaofeng: This section will clear the rwlayer data on specified path to handle malfunctioning machine data leak.
 		//               Need a more elegant way to handle this
 		if _, err := os.Stat(homePath); err == nil {
 			if err = os.RemoveAll(homePath); err != nil {
@@ -793,7 +806,7 @@ func (o *snapshotter) mounts(info *snapshots.Info, s storage.Snapshot, key strin
 func (o *snapshotter) upperPath(info *snapshots.Info, id string, key string) string {
 	if info != nil {
 		if home, err := getActivePath(info, key); err == nil {
-			//return path combined by home
+			// return path combined by home
 			return filepath.Join(home, id, "fs")
 		}
 	}
@@ -803,7 +816,7 @@ func (o *snapshotter) upperPath(info *snapshots.Info, id string, key string) str
 func (o *snapshotter) workPath(info *snapshots.Info, id string, key string) string {
 	if info != nil {
 		if home, err := getActivePath(info, key); err == nil {
-			//return path combined by home
+			// return path combined by home
 			return filepath.Join(home, id, "work")
 		}
 	}
