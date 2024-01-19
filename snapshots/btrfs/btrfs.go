@@ -186,6 +186,10 @@ func (b *snapshotter) Walk(ctx context.Context, fn snapshots.WalkFunc, fs ...str
 	return storage.WalkInfo(ctx, fn, fs...)
 }
 
+func (b *snapshotter) Active(ctx context.Context, key, parent string, opts ...snapshots.Opt) ([]mount.Mount, error) {
+	return b.makeSnapshot(ctx, snapshots.KindActive, key, parent, opts)
+}
+
 func (b *snapshotter) Prepare(ctx context.Context, key, parent string, opts ...snapshots.Opt) ([]mount.Mount, error) {
 	return b.makeSnapshot(ctx, snapshots.KindActive, key, parent, opts)
 }

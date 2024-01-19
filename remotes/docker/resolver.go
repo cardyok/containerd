@@ -512,7 +512,7 @@ func (r *dockerResolver) tryReferrer(ctx context.Context, dgst digest.Digest, co
 	}
 
 	paths := []string{"referrers", dgst.String()}
-	log.G(ctx).Debug("trying to fetch referrer for %v", dgst)
+	log.G(ctx).Debugf("trying to fetch referrer for %v", dgst)
 
 	req := base.request(host, http.MethodGet, paths...)
 	if err := req.addNamespace(base.refspec.Hostname()); err != nil {

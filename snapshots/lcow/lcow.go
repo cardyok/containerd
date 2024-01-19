@@ -34,14 +34,15 @@ import (
 
 	winfs "github.com/Microsoft/go-winio/pkg/fs"
 	"github.com/Microsoft/hcsshim/pkg/go-runhcs"
+	"github.com/containerd/continuity/fs"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/plugin"
 	"github.com/containerd/containerd/snapshots"
 	"github.com/containerd/containerd/snapshots/storage"
-	"github.com/containerd/continuity/fs"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 func init() {
@@ -156,6 +157,10 @@ func (s *snapshotter) Usage(ctx context.Context, key string) (snapshots.Usage, e
 	}
 
 	return usage, nil
+}
+
+func (s *snapshotter) Active(ctx context.Context, key, parent string, opts ...snapshots.Opt) ([]mount.Mount, error) {
+	return s.createSnapshot(ctx, snapshots.KindActive, key, parent, opts)
 }
 
 func (s *snapshotter) Prepare(ctx context.Context, key, parent string, opts ...snapshots.Opt) ([]mount.Mount, error) {

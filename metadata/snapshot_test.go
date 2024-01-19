@@ -27,6 +27,8 @@ import (
 	"testing"
 	"time"
 
+	bolt "go.etcd.io/bbolt"
+
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/filters"
 	"github.com/containerd/containerd/mount"
@@ -35,7 +37,6 @@ import (
 	"github.com/containerd/containerd/snapshots"
 	"github.com/containerd/containerd/snapshots/native"
 	"github.com/containerd/containerd/snapshots/testsuite"
-	bolt "go.etcd.io/bbolt"
 )
 
 func newTestSnapshotter(ctx context.Context, root string) (snapshots.Snapshotter, func() error, error) {
@@ -295,6 +296,10 @@ func (s *tmpSnapshotter) Mounts(ctx context.Context, key string) ([]mount.Mount,
 }
 
 func (s *tmpSnapshotter) Prepare(ctx context.Context, key, parent string, opts ...snapshots.Opt) ([]mount.Mount, error) {
+	return s.create(ctx, key, parent, snapshots.KindActive, opts...)
+}
+
+func (s *tmpSnapshotter) Active(ctx context.Context, key, parent string, opts ...snapshots.Opt) ([]mount.Mount, error) {
 	return s.create(ctx, key, parent, snapshots.KindActive, opts...)
 }
 

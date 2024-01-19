@@ -28,15 +28,16 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hashicorp/go-multierror"
+	"github.com/sirupsen/logrus"
+	exec "golang.org/x/sys/execabs"
+
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/snapshots"
 	"github.com/containerd/containerd/snapshots/devmapper/dmsetup"
 	"github.com/containerd/containerd/snapshots/storage"
-	"github.com/hashicorp/go-multierror"
-	"github.com/sirupsen/logrus"
-	exec "golang.org/x/sys/execabs"
 )
 
 type fsType string
@@ -194,6 +195,23 @@ func (s *Snapshotter) Mounts(ctx context.Context, key string) ([]mount.Mount, er
 	}
 
 	return s.buildMounts(ctx, snap, fsType(snapInfo.Labels[devmapperSnapshotFsType])), nil
+}
+
+// Active creates thin device for an active snapshot identified by key
+func (s *Snapshotter) Active(ctx context.Context, key, parent string, opts ...snapshots.Opt) ([]mount.Mount, error) {
+	log.G(ctx).WithFields(logrus.Fields{"key": key, "parent": parent}).Debug("prepare")
+
+	var (
+		mounts []mount.Mount
+		err    error
+	)
+
+	err = s.withTransaction(ctx, true, func(ctx context.Context) error {
+		mounts, err = s.createSnapshot(ctx, snapshots.KindActive, key, parent, opts...)
+		return err
+	})
+
+	return mounts, err
 }
 
 // Prepare creates thin device for an active snapshot identified by key

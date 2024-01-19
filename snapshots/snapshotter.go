@@ -278,12 +278,29 @@ type Snapshotter interface {
 	// This can be used to recover mounts after calling View or Prepare.
 	Mounts(ctx context.Context, key string) ([]mount.Mount, error)
 
-	// Prepare creates an active snapshot identified by key descending from the
+	// Active creates an active snapshot identified by key descending from the
 	// provided parent.  The returned mounts can be used to mount the snapshot
 	// to capture changes.
 	//
 	// If a parent is provided, after performing the mounts, the destination
 	// will start with the content of the parent. The parent must be a
+	// committed snapshot. Changes to the mounted destination will be captured
+	// in relation to the parent. The default parent, "", is an empty
+	// directory.
+	//
+	// Active snapshot CANNOT be transferred to a committed snapshot by invoking
+	// Commit interface.
+	//
+	// Multiple calls to Active with the same key should fail.
+	Active(ctx context.Context, key, parent string, opts ...Opt) ([]mount.Mount, error)
+
+	// Prepare creates an active snapshot identified by key descending from the
+	// provided parent.  The returned mounts can be used to mount the snapshot
+	// to capture changes.
+	//
+	// If a parent is provided, after performing the mounts, the destination
+	// will start with the content of the parent. Returned mount structure will be
+	// defined by roDriver, roDriver will be provided with hiearchy. The parent must be a
 	// committed snapshot. Changes to the mounted destination will be captured
 	// in relation to the parent. The default parent, "", is an empty
 	// directory.

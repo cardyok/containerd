@@ -117,6 +117,10 @@ func (o *snapshotter) Usage(ctx context.Context, key string) (snapshots.Usage, e
 	return usage, nil
 }
 
+func (o *snapshotter) Active(ctx context.Context, key, parent string, opts ...snapshots.Opt) ([]mount.Mount, error) {
+	return o.createSnapshot(ctx, snapshots.KindActive, key, parent, opts)
+}
+
 func (o *snapshotter) Prepare(ctx context.Context, key, parent string, opts ...snapshots.Opt) ([]mount.Mount, error) {
 	return o.createSnapshot(ctx, snapshots.KindActive, key, parent, opts)
 }

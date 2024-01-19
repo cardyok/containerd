@@ -2418,7 +2418,6 @@ file {
     java_outer_classname: "StatusProto"
     java_multiple_files: true
     go_package: "rpc"
-    cc_enable_arenas: true
     objc_class_prefix: "RPC"
   }
   syntax: "proto3"
@@ -3038,6 +3037,69 @@ file {
   dependency: "google/protobuf/timestamp.proto"
   dependency: "github.com/containerd/containerd/api/types/mount.proto"
   message_type {
+    name: "ActiveSnapshotRequest"
+    field {
+      name: "snapshotter"
+      number: 1
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "snapshotter"
+    }
+    field {
+      name: "key"
+      number: 2
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "key"
+    }
+    field {
+      name: "parent"
+      number: 3
+      label: LABEL_OPTIONAL
+      type: TYPE_STRING
+      json_name: "parent"
+    }
+    field {
+      name: "labels"
+      number: 4
+      label: LABEL_REPEATED
+      type: TYPE_MESSAGE
+      type_name: ".containerd.services.snapshots.v1.ActiveSnapshotRequest.LabelsEntry"
+      json_name: "labels"
+    }
+    nested_type {
+      name: "LabelsEntry"
+      field {
+        name: "key"
+        number: 1
+        label: LABEL_OPTIONAL
+        type: TYPE_STRING
+        json_name: "key"
+      }
+      field {
+        name: "value"
+        number: 2
+        label: LABEL_OPTIONAL
+        type: TYPE_STRING
+        json_name: "value"
+      }
+      options {
+        map_entry: true
+      }
+    }
+  }
+  message_type {
+    name: "ActiveSnapshotResponse"
+    field {
+      name: "mounts"
+      number: 1
+      label: LABEL_REPEATED
+      type: TYPE_MESSAGE
+      type_name: ".containerd.types.Mount"
+      json_name: "mounts"
+    }
+  }
+  message_type {
     name: "PrepareSnapshotRequest"
     field {
       name: "snapshotter"
@@ -3523,6 +3585,11 @@ file {
   }
   service {
     name: "Snapshots"
+    method {
+      name: "Active"
+      input_type: ".containerd.services.snapshots.v1.ActiveSnapshotRequest"
+      output_type: ".containerd.services.snapshots.v1.ActiveSnapshotResponse"
+    }
     method {
       name: "Prepare"
       input_type: ".containerd.services.snapshots.v1.PrepareSnapshotRequest"

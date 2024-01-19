@@ -20,12 +20,13 @@ import (
 	"context"
 	"io"
 
+	protobuftypes "github.com/gogo/protobuf/types"
+
 	snapshotsapi "github.com/containerd/containerd/api/services/snapshots/v1"
 	"github.com/containerd/containerd/api/types"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/snapshots"
-	protobuftypes "github.com/gogo/protobuf/types"
 )
 
 // NewSnapshotter returns a new Snapshotter which communicates over a GRPC
@@ -84,6 +85,25 @@ func (p *proxySnapshotter) Mounts(ctx context.Context, key string) ([]mount.Moun
 	resp, err := p.client.Mounts(ctx, &snapshotsapi.MountsRequest{
 		Snapshotter: p.snapshotterName,
 		Key:         key,
+	})
+	if err != nil {
+		return nil, errdefs.FromGRPC(err)
+	}
+	return toMounts(resp.Mounts), nil
+}
+
+func (p *proxySnapshotter) Active(ctx context.Context, key, parent string, opts ...snapshots.Opt) ([]mount.Mount, error) {
+	var local snapshots.Info
+	for _, opt := range opts {
+		if err := opt(&local); err != nil {
+			return nil, err
+		}
+	}
+	resp, err := p.client.Active(ctx, &snapshotsapi.PrepareSnapshotRequest{
+		Snapshotter: p.snapshotterName,
+		Key:         key,
+		Parent:      parent,
+		Labels:      local.Labels,
 	})
 	if err != nil {
 		return nil, errdefs.FromGRPC(err)

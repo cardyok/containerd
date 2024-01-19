@@ -19,12 +19,13 @@ package snapshotservice
 import (
 	"context"
 
+	ptypes "github.com/gogo/protobuf/types"
+
 	snapshotsapi "github.com/containerd/containerd/api/services/snapshots/v1"
 	"github.com/containerd/containerd/api/types"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/snapshots"
-	ptypes "github.com/gogo/protobuf/types"
 )
 
 var empty = &ptypes.Empty{}
@@ -36,6 +37,21 @@ type service struct {
 // FromSnapshotter returns a Snapshot API server from a containerd snapshotter
 func FromSnapshotter(sn snapshots.Snapshotter) snapshotsapi.SnapshotsServer {
 	return service{sn: sn}
+}
+
+func (s service) Active(ctx context.Context, pr *snapshotsapi.ActiveSnapshotRequest) (*snapshotsapi.ActiveSnapshotResponse, error) {
+	var opts []snapshots.Opt
+	if pr.Labels != nil {
+		opts = append(opts, snapshots.WithLabels(pr.Labels))
+	}
+	mounts, err := s.sn.Active(ctx, pr.Key, pr.Parent, opts...)
+	if err != nil {
+		return nil, errdefs.ToGRPC(err)
+	}
+
+	return &snapshotsapi.ActiveSnapshotResponse{
+		Mounts: fromMounts(mounts),
+	}, nil
 }
 
 func (s service) Prepare(ctx context.Context, pr *snapshotsapi.PrepareSnapshotRequest) (*snapshotsapi.PrepareSnapshotResponse, error) {

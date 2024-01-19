@@ -20,6 +20,9 @@ import (
 	"context"
 	"errors"
 
+	ptypes "github.com/gogo/protobuf/types"
+	"google.golang.org/grpc"
+
 	snapshotsapi "github.com/containerd/containerd/api/services/snapshots/v1"
 	"github.com/containerd/containerd/api/types"
 	"github.com/containerd/containerd/errdefs"
@@ -28,8 +31,6 @@ import (
 	"github.com/containerd/containerd/plugin"
 	"github.com/containerd/containerd/services"
 	"github.com/containerd/containerd/snapshots"
-	ptypes "github.com/gogo/protobuf/types"
-	"google.golang.org/grpc"
 )
 
 func init() {
@@ -81,6 +82,27 @@ func (s *service) getSnapshotter(name string) (snapshots.Snapshotter, error) {
 func (s *service) Register(gs *grpc.Server) error {
 	snapshotsapi.RegisterSnapshotsServer(gs, s)
 	return nil
+}
+
+func (s *service) Active(ctx context.Context, pr *snapshotsapi.ActiveSnapshotRequest) (*snapshotsapi.ActiveSnapshotResponse, error) {
+	log.G(ctx).WithField("parent", pr.Parent).WithField("key", pr.Key).Debugf("active snapshot")
+	sn, err := s.getSnapshotter(pr.Snapshotter)
+	if err != nil {
+		return nil, err
+	}
+
+	var opts []snapshots.Opt
+	if pr.Labels != nil {
+		opts = append(opts, snapshots.WithLabels(pr.Labels))
+	}
+	mounts, err := sn.Active(ctx, pr.Key, pr.Parent, opts...)
+	if err != nil {
+		return nil, errdefs.ToGRPC(err)
+	}
+
+	return &snapshotsapi.ActiveSnapshotResponse{
+		Mounts: fromMounts(mounts),
+	}, nil
 }
 
 func (s *service) Prepare(ctx context.Context, pr *snapshotsapi.PrepareSnapshotRequest) (*snapshotsapi.PrepareSnapshotResponse, error) {

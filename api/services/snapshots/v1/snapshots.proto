@@ -28,6 +28,7 @@ option go_package = "github.com/containerd/containerd/api/services/snapshots/v1;
 
 // Snapshot service manages snapshots
 service Snapshots {
+	rpc Active(ActiveSnapshotRequest) returns (ActiveSnapshotResponse);
 	rpc Prepare(PrepareSnapshotRequest) returns (PrepareSnapshotResponse);
 	rpc View(ViewSnapshotRequest) returns (ViewSnapshotResponse);
 	rpc Mounts(MountsRequest) returns (MountsResponse);
@@ -38,6 +39,21 @@ service Snapshots {
 	rpc List(ListSnapshotsRequest) returns (stream ListSnapshotsResponse);
 	rpc Usage(UsageRequest) returns (UsageResponse);
 	rpc Cleanup(CleanupRequest) returns (google.protobuf.Empty);
+}
+
+message ActiveSnapshotRequest {
+	string snapshotter = 1;
+	string key = 2;
+	string parent = 3;
+
+	// Labels are arbitrary data on snapshots.
+	//
+	// The combined size of a key/value pair cannot exceed 4096 bytes.
+	map<string, string> labels  = 4;
+}
+
+message ActiveSnapshotResponse {
+	repeated containerd.types.Mount mounts = 1;
 }
 
 message PrepareSnapshotRequest {
