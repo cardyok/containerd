@@ -369,6 +369,16 @@ func (u *unpacker) handlerWrapper(
 						return u.unpack(uctx, rCtx, f, desc, l)
 					})
 				}
+			default:
+				lock.Lock()
+				l := layers[desc.Digest]
+				lock.Unlock()
+				if len(l) > 0 {
+					atomic.AddInt32(unpacks, 1)
+					eg.Go(func() error {
+						return u.unpack(uctx, rCtx, f, desc, l)
+					})
+				}
 			}
 			return children, nil
 		})

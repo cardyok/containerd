@@ -186,6 +186,7 @@ func (c *criService) PullImage(ctx context.Context, r *runtime.PullImageRequest)
 			Headers:       c.config.Registry.Headers,
 			Hosts:         c.registryHosts(ctx, r.GetAuth(), hostConfig, ref, hostAnnotations, plainHTTP),
 			TransportOpts: transportOpts,
+			Artifacts:     c.config.Artifacts,
 		})
 		isSchema1    bool
 		imageHandler containerdimages.HandlerFunc = func(_ context.Context,

@@ -344,6 +344,8 @@ type PluginConfig struct {
 	DynamicCRIConfPath string `toml:"dynamic_cri_conf_path" json:"dynamicCriConfPath"`
 	// PortForwardInterfaceCheckList defines a list of interfaces that are allowed to be used for port forwarding
 	PortForwardInterfaceCheckList map[string]bool `toml:"port_forward_interface_check_list" json:"portForwardInterfaceCheckList"`
+	// Artifacts indicates the artifacts supported by resolver
+	Artifacts []string `toml:"artifacts" json:"artifacts"`
 }
 
 // X509KeyPairStreaming contains the x509 configuration for streaming

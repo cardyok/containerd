@@ -18,6 +18,7 @@ package docker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -122,6 +123,9 @@ type ResolverOptions struct {
 
 	// TransportOpts handles options to transport client
 	TransportOpts []TransportOpt
+
+	// Artifacts indicates the artifacts supported by resolver
+	Artifacts []string
 }
 
 // DefaultHost is the default host function.
@@ -139,6 +143,7 @@ type dockerResolver struct {
 	resolveHeader http.Header
 	tracker       StatusTracker
 	transportOpt  []TransportOpt
+	artifacts     []string
 }
 
 // NewResolver returns a new resolver to a Docker registry
@@ -200,6 +205,7 @@ func NewResolver(options ResolverOptions) remotes.Resolver {
 		resolveHeader: resolveHeader,
 		tracker:       options.Tracker,
 		transportOpt:  options.TransportOpts,
+		artifacts:     options.Artifacts,
 	}
 }
 
@@ -361,6 +367,12 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (_ string, _ o
 					dgst = dgstHeader
 				}
 			}
+
+			// Try referrer
+			if dgst != "" && size != -1 {
+				dgst, contentType, size = r.tryReferrer(ctx, dgst, contentType, size, base, host)
+			}
+
 			if dgst == "" || size == -1 {
 				log.G(ctx).Debug("no Docker-Content-Digest header, fetching manifest instead")
 
@@ -491,6 +503,58 @@ func (r *dockerResolver) base(refspec reference.Spec) (*dockerBase, error) {
 		hosts:      hosts,
 		header:     r.header,
 	}, nil
+}
+
+func (r *dockerResolver) tryReferrer(ctx context.Context, dgst digest.Digest, contentType string, size int64, base *dockerBase, host RegistryHost) (digest.Digest, string, int64) {
+	artifacts := r.artifacts
+	if len(artifacts) == 0 {
+		return dgst, contentType, size
+	}
+
+	paths := []string{"referrers", dgst.String()}
+	log.G(ctx).Debug("trying to fetch referrer for %v", dgst)
+
+	req := base.request(host, http.MethodGet, paths...)
+	if err := req.addNamespace(base.refspec.Hostname()); err != nil {
+		log.G(ctx).Warnf("referrer: failed to add namespace for %v: %v", dgst, err)
+		return dgst, contentType, size
+	}
+
+	for key, value := range r.resolveHeader {
+		req.header[key] = append(req.header[key], value...)
+	}
+
+	resp, err := req.doWithRetries(ctx, nil)
+	if err != nil {
+		log.G(ctx).Warnf("referrer: failed to add namespace for %v: %v", dgst, err)
+		return dgst, contentType, size
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return dgst, contentType, size
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 8e6)) // limit to 8MB
+	if err != nil {
+		log.G(ctx).Warnf("referrer: failed to read object from http resp for %v: %v", dgst, err)
+		return dgst, contentType, size
+	}
+
+	var index ocispec.Index
+	if err := json.Unmarshal(b, &index); err != nil {
+		log.G(ctx).Warnf("referrer: failed to unmarshal malformat referrer object for %v: %v", dgst, err)
+		return dgst, contentType, size
+	}
+	log.G(ctx).Infof("referrer: found %+v referrers for %v", index, dgst)
+	for _, referrer := range index.Manifests {
+		if !checkStringSlice(artifacts, referrer.ArtifactType) {
+			continue
+		}
+		dgst = referrer.Digest
+		contentType = referrer.MediaType
+		size = referrer.Size
+		return dgst, contentType, size
+	}
+	return dgst, contentType, size
 }
 
 func (r *dockerBase) filterHosts(caps HostCapabilities) (hosts []RegistryHost) {
@@ -732,6 +796,16 @@ func IsLocalhost(host string) bool {
 
 // checkIntSlice checks whether target exists in src slice.
 func checkIntSlice(src []int, target int) bool {
+	for _, i := range src {
+		if i == target {
+			return true
+		}
+	}
+	return false
+}
+
+// checkStringSlice checks whether target exists in src slice.
+func checkStringSlice(src []string, target string) bool {
 	for _, i := range src {
 		if i == target {
 			return true
