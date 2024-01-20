@@ -526,7 +526,7 @@ func (r *dockerResolver) tryReferrer(ctx context.Context, dgst digest.Digest, co
 
 	resp, err := req.doWithRetries(ctx, nil)
 	if err != nil {
-		log.G(ctx).Warnf("referrer: failed to add namespace for %v: %v", dgst, err)
+		log.G(ctx).Warnf("referrer: failed to GET referrer %v: %v", dgst, err)
 		return dgst, contentType, size
 	}
 	defer resp.Body.Close()
@@ -549,10 +549,7 @@ func (r *dockerResolver) tryReferrer(ctx context.Context, dgst digest.Digest, co
 		if !checkStringSlice(artifacts, referrer.ArtifactType) {
 			continue
 		}
-		dgst = referrer.Digest
-		contentType = referrer.MediaType
-		size = referrer.Size
-		return dgst, contentType, size
+		return referrer.Digest, referrer.MediaType, referrer.Size
 	}
 	return dgst, contentType, size
 }
@@ -806,8 +803,8 @@ func checkIntSlice(src []int, target int) bool {
 
 // checkStringSlice checks whether target exists in src slice.
 func checkStringSlice(src []string, target string) bool {
-	for _, i := range src {
-		if i == target {
+	for _, item := range src {
+		if item == target {
 			return true
 		}
 	}

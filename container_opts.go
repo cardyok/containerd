@@ -22,16 +22,17 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/containerd/typeurl"
+	"github.com/gogo/protobuf/types"
+	"github.com/opencontainers/image-spec/identity"
+	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+
 	"github.com/containerd/containerd/containers"
 	"github.com/containerd/containerd/content"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/images"
 	"github.com/containerd/containerd/oci"
 	"github.com/containerd/containerd/snapshots"
-	"github.com/containerd/typeurl"
-	"github.com/gogo/protobuf/types"
-	"github.com/opencontainers/image-spec/identity"
-	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 // DeleteOpts allows the caller to set options for the deletion of a container
@@ -214,7 +215,7 @@ func WithNewSnapshot(id string, i Image, opts ...snapshots.Opt) NewContainerOpts
 		if err != nil {
 			return err
 		}
-		if _, err := s.Prepare(ctx, id, parent, opts...); err != nil {
+		if _, err := s.Active(ctx, id, parent, opts...); err != nil {
 			return err
 		}
 		c.SnapshotKey = id

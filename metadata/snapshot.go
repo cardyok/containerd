@@ -273,15 +273,19 @@ func (s *snapshotter) Mounts(ctx context.Context, key string) ([]mount.Mount, er
 	return s.Snapshotter.Mounts(ctx, bkey)
 }
 
+func (s *snapshotter) Active(ctx context.Context, key, parent string, opts ...snapshots.Opt) ([]mount.Mount, error) {
+	return s.createSnapshot(ctx, key, parent, false, true, opts)
+}
+
 func (s *snapshotter) Prepare(ctx context.Context, key, parent string, opts ...snapshots.Opt) ([]mount.Mount, error) {
-	return s.createSnapshot(ctx, key, parent, false, opts)
+	return s.createSnapshot(ctx, key, parent, false, false, opts)
 }
 
 func (s *snapshotter) View(ctx context.Context, key, parent string, opts ...snapshots.Opt) ([]mount.Mount, error) {
-	return s.createSnapshot(ctx, key, parent, true, opts)
+	return s.createSnapshot(ctx, key, parent, true, false, opts)
 }
 
-func (s *snapshotter) createSnapshot(ctx context.Context, key, parent string, readonly bool, opts []snapshots.Opt) ([]mount.Mount, error) {
+func (s *snapshotter) createSnapshot(ctx context.Context, key, parent string, readonly bool, active bool, opts []snapshots.Opt) ([]mount.Mount, error) {
 	s.l.RLock()
 	defer s.l.RUnlock()
 
@@ -351,7 +355,9 @@ func (s *snapshotter) createSnapshot(ctx context.Context, key, parent string, re
 		created string
 		rerr    error
 	)
-	if readonly {
+	if active {
+		m, err = s.Snapshotter.Active(ctx, bkey, bparent, bopts...)
+	} else if readonly {
 		m, err = s.Snapshotter.View(ctx, bkey, bparent, bopts...)
 	} else {
 		m, err = s.Snapshotter.Prepare(ctx, bkey, bparent, bopts...)

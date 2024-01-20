@@ -249,6 +249,7 @@ func TestListContainers(t *testing.T) {
 			Metadata:     &runtime.ContainerMetadata{Name: "name-1"},
 			State:        runtime.ContainerState_CONTAINER_CREATED,
 			CreatedAt:    createdAt,
+			Annotations:  map[string]string{"io.cri-containerd.container.pid": "0"},
 		},
 		{
 			Id:           "c-2container",
@@ -256,6 +257,7 @@ func TestListContainers(t *testing.T) {
 			Metadata:     &runtime.ContainerMetadata{Name: "name-2"},
 			State:        runtime.ContainerState_CONTAINER_RUNNING,
 			CreatedAt:    createdAt,
+			Annotations:  map[string]string{"io.cri-containerd.container.pid": "0"},
 		},
 		{
 			Id:           "c-3container",
@@ -263,6 +265,7 @@ func TestListContainers(t *testing.T) {
 			Metadata:     &runtime.ContainerMetadata{Name: "name-3"},
 			State:        runtime.ContainerState_CONTAINER_EXITED,
 			CreatedAt:    createdAt,
+			Annotations:  map[string]string{"io.cri-containerd.container.pid": "0"},
 		},
 		{
 			Id:           "c-4container",
@@ -270,6 +273,7 @@ func TestListContainers(t *testing.T) {
 			Metadata:     &runtime.ContainerMetadata{Name: "name-4"},
 			State:        runtime.ContainerState_CONTAINER_CREATED,
 			CreatedAt:    createdAt,
+			Annotations:  map[string]string{"io.cri-containerd.container.pid": "0"},
 		},
 	}
 
@@ -338,6 +342,7 @@ func TestListContainers(t *testing.T) {
 		require.NotNil(t, resp)
 		containers := resp.GetContainers()
 		assert.Len(t, containers, len(testdata.expect))
+		t.Logf("Result: %s", containers)
 		for _, cntr := range testdata.expect {
 			assert.Contains(t, containers, cntr)
 		}

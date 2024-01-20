@@ -27,7 +27,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/containerd/continuity/fs"
 	"github.com/sirupsen/logrus"
@@ -76,11 +75,16 @@ const MaxActiveQuota = 64 * 1024 * 1024 * 1024 * 1024
 // MinActiveQuota is defined the min usage quota of active layer.
 const MinActiveQuota = 1024 * 1024 * 1024
 
+const SandBoxMetaFile = "pod_sandbox_meta"
+
+const labelSnapshotRef = "containerd.io/snapshot.ref"
+
 // SnapshotterConfig is used to configure the overlay snapshotter instance
 type SnapshotterConfig struct {
-	asyncRemove   bool
-	upperdirLabel bool
-	quotaDriver   string
+	asyncRemove     bool
+	upperdirLabel   bool
+	quotaDriver     string
+	defaultUpperDir string
 }
 
 // Opt is an option to configure the overlay snapshotter
@@ -105,19 +109,28 @@ func WithUpperdirLabel(config *SnapshotterConfig) error {
 }
 
 type snapshotter struct {
-	root          string
-	ms            *storage.MetaStore
-	asyncRemove   bool
-	upperdirLabel bool
-	indexOff      bool
-	userxattr     bool // whether to enable "userxattr" mount option
-	quotaDriver   quotatypes.Quota
-	roDriver      roDriver.RoDriver
+	root            string
+	ms              *storage.MetaStore
+	asyncRemove     bool
+	upperdirLabel   bool
+	defaultUpperDir string
+	indexOff        bool
+	userxattr       bool // whether to enable "userxattr" mount option
+	quotaDriver     quotatypes.Quota
+	roDriver        roDriver.RoDriver
 }
 
 func WithQuotaDriver(driver string) Opt {
 	return func(config *SnapshotterConfig) error {
 		config.quotaDriver = driver
+		return nil
+	}
+}
+
+// WithDefaultUpperDir adds as a global default upper dir for active layers
+func WithDefaultUpperDir(upperDir string) Opt {
+	return func(config *SnapshotterConfig) error {
+		config.defaultUpperDir = upperDir
 		return nil
 	}
 }
@@ -133,7 +146,14 @@ func NewSnapshotter(root string, opts ...Opt) (snapshots.Snapshotter, error) {
 		}
 	}
 
+	if config.defaultUpperDir == "" {
+		config.defaultUpperDir = root
+	}
+
 	if err := os.MkdirAll(root, 0700); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(config.defaultUpperDir, 0700); err != nil && !os.IsExist(err) {
 		return nil, err
 	}
 	supportsDType, err := fs.SupportsDType(root)
@@ -151,6 +171,9 @@ func NewSnapshotter(root string, opts ...Opt) (snapshots.Snapshotter, error) {
 	if err := os.Mkdir(filepath.Join(root, "snapshots"), 0700); err != nil && !os.IsExist(err) {
 		return nil, err
 	}
+	if err := os.Mkdir(filepath.Join(config.defaultUpperDir, "snapshots"), 0700); err != nil && !os.IsExist(err) {
+		return nil, err
+	}
 	// figure out whether "userxattr" option is recognized by the kernel && needed
 	userxattr, err := overlayutils.NeedsUserXAttr(root)
 	if err != nil {
@@ -160,24 +183,21 @@ func NewSnapshotter(root string, opts ...Opt) (snapshots.Snapshotter, error) {
 	// init upper layer quota driver
 	quotaDriver := quota.New(config.quotaDriver, nil)
 
-	roDriver, err := overlaybd.New()
+	roDriverInit, err := overlaybd.New()
 	if err != nil {
 		return nil, fmt.Errorf("failed to start overlaybd driver: %v", err)
 	}
-	// ensure overlaybd available
-	if err := overlaybd.SupportsOverlaybd(); err != nil {
-		return nil, err
-	}
 
 	return &snapshotter{
-		root:          root,
-		ms:            ms,
-		asyncRemove:   config.asyncRemove,
-		upperdirLabel: config.upperdirLabel,
-		indexOff:      supportsIndex(),
-		userxattr:     userxattr,
-		quotaDriver:   quotaDriver,
-		roDriver:      roDriver,
+		root:            root,
+		ms:              ms,
+		asyncRemove:     config.asyncRemove,
+		upperdirLabel:   config.upperdirLabel,
+		defaultUpperDir: config.defaultUpperDir,
+		indexOff:        supportsIndex(),
+		userxattr:       userxattr,
+		quotaDriver:     quotaDriver,
+		roDriver:        roDriverInit,
 	}, nil
 }
 
@@ -276,16 +296,259 @@ func (o *snapshotter) Usage(ctx context.Context, key string) (snapshots.Usage, e
 	return usage, nil
 }
 
-func (o *snapshotter) Active(ctx context.Context, key, parent string, opts ...snapshots.Opt) ([]mount.Mount, error) {
-	return o.createSnapshot(ctx, snapshots.KindActive, key, parent, opts)
+func (o *snapshotter) Prepare(ctx context.Context, key, parent string, opts ...snapshots.Opt) (_ []mount.Mount, retErr error) {
+	ctx, t, err := o.ms.TransactionContext(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	var base snapshots.Info
+	for _, opt := range opts {
+		if err := opt(&base); err != nil {
+			return nil, err
+		}
+	}
+	log.G(ctx).Infof("prepare for layer %v with parent %v labels %v", key, parent, base.Labels)
+	s, parentDir, mounts, err := o.prepareLower(ctx, snapshots.KindActive, key, parent, false, opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare: %w", err)
+	}
+	snapshotDir := o.fsPath(&base, s.ID, key)
+	skipFetch, err := o.roDriver.PreProcess(ctx, snapshotDir, parentDir, parent, base.Labels)
+	if err != nil {
+		t.Rollback()
+		return nil, fmt.Errorf("roDriver failed preparing layer %v: %w", key, err)
+	}
+	defer func() {
+		if retErr != nil {
+			t.Rollback()
+		}
+	}()
+	if skipFetch {
+		name := base.Labels[labelSnapshotRef]
+		if err := o.Commit(ctx, name, key, opts...); err != nil {
+			return nil, fmt.Errorf("failed to commit layer %v: %w", key, err)
+		}
+		// skip fetch means the layer is on demand layer
+		return nil, errdefs.ErrAlreadyExists
+	}
+	if err = t.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit layer: %w", err)
+	}
+	log.G(ctx).Infof("prepare for layer %v gives mount %v, skip fetch: %v", key, mounts, skipFetch)
+	return mounts, err
 }
 
-func (o *snapshotter) Prepare(ctx context.Context, key, parent string, opts ...snapshots.Opt) ([]mount.Mount, error) {
-	return o.createSnapshot(ctx, snapshots.KindActive, key, parent, opts)
+func (o *snapshotter) Active(ctx context.Context, key, parent string, opts ...snapshots.Opt) (_ []mount.Mount, retErr error) {
+	ctx, t, err := o.ms.TransactionContext(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	if parent == "" {
+		return nil, fmt.Errorf("active layer parent cannot be nil")
+	}
+	opts = append(opts, snapshots.WithLabels(map[string]string{"rwlayer": "true"}))
+
+	var base snapshots.Info
+	for _, opt := range opts {
+		if err := opt(&base); err != nil {
+			return nil, fmt.Errorf("failed to apply options: %w", err)
+		}
+	}
+
+	s, _, lowerMount, err := o.prepareLower(ctx, snapshots.KindActive, key, parent, true, opts)
+	if err != nil {
+		t.Rollback()
+		return lowerMount, err
+	}
+	defer func() {
+		if retErr != nil {
+			t.Rollback()
+		}
+	}()
+	upperDir := o.upperPath(&base, s.ID, key)
+	lowerDir := o.lowerPath(&base, s.ID, key)
+	fsDir := filepath.Join(upperDir, "fs")
+	workDir := filepath.Join(upperDir, "work")
+	if err := o.prepareUpperDir(ctx, upperDir, fsDir, workDir, base); err != nil {
+		o.roDriver.Cleanup(ctx, s.ID)
+		return nil, fmt.Errorf("failed to prepare upper dir: %w", err)
+	}
+	if err := os.MkdirAll(lowerDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to prepare lower dir: %w", err)
+	}
+	if err := mount.All(lowerMount, lowerDir); err != nil {
+		o.roDriver.Cleanup(ctx, s.ID)
+		return nil, fmt.Errorf("failed to mount lower dir with %v: %w", lowerMount, err)
+	}
+
+	if err = t.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit layer: %w", err)
+	}
+	options := []string{"lowerdir=" + lowerDir, "upperdir=" + fsDir, "workdir=" + workDir}
+	// set index=off when mount overlayfs
+	if o.indexOff {
+		options = append(options, "index=off")
+	}
+
+	if o.userxattr {
+		options = append(options, "userxattr")
+	}
+	return []mount.Mount{
+		{
+			Source:  "overlay",
+			Type:    "overlay",
+			Options: options,
+		},
+	}, nil
 }
 
 func (o *snapshotter) View(ctx context.Context, key, parent string, opts ...snapshots.Opt) ([]mount.Mount, error) {
-	return o.createSnapshot(ctx, snapshots.KindView, key, parent, opts)
+	opts = append(opts, snapshots.WithLabels(map[string]string{"rwlayer": "true"}))
+	_, _, mounts, err := o.prepareLower(ctx, snapshots.KindView, key, parent, true, opts)
+	return mounts, err
+}
+
+func (o *snapshotter) prepareUpperDir(ctx context.Context, target, fsDir, workDir string, base snapshots.Info) error {
+	if err := os.MkdirAll(target, 0755); err != nil {
+		return fmt.Errorf("failed to create upper dir: %w", err)
+	}
+	if err := os.MkdirAll(fsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create fs dir: %w", err)
+	}
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		return fmt.Errorf("failed to create work dir: %w", err)
+	}
+
+	activeQuota, err := o.getActiveQuota(&base)
+	if err != nil && !errdefs.IsNotFound(err) {
+		log.G(ctx).WithError(err).WithField("snapshotter", base.Name).Warn("activeQuota specified invalid")
+	}
+	if o.quotaDriver != nil && activeQuota > 0 {
+		opts := map[string]string{
+			"base":   target,
+			"rwFlag": "rw",
+		}
+		err := o.quotaDriver.Setup(ctx, target, activeQuota, opts)
+		if err != nil {
+			log.G(ctx).WithError(err).Warn("failed to prepare quota size")
+		}
+	}
+
+	if err := os.MkdirAll(fsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create fs dir: %w", err)
+	}
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		return fmt.Errorf("failed to create work dir: %w", err)
+	}
+	return nil
+}
+
+func (o *snapshotter) prepareLower(ctx context.Context, kind snapshots.Kind, key, parent string, isActive bool, opts []snapshots.Opt) (storage.Snapshot, string, []mount.Mount, error) {
+	var base snapshots.Info
+	for _, opt := range opts {
+		if err := opt(&base); err != nil {
+			return storage.Snapshot{}, "", nil, fmt.Errorf("failed to apply options: %w", err)
+		}
+	}
+	var snapshotDir string
+	if isActive {
+		snapshotDir = filepath.Join(o.defaultUpperDir, "snapshots")
+	} else {
+		snapshotDir = filepath.Join(o.root, "snapshots")
+	}
+
+	if homePath, err := getActivePath(&base, key); err == nil {
+		if _, err := os.Stat(homePath); err == nil {
+			if err = os.RemoveAll(homePath); err != nil {
+				logrus.WithError(err).Errorf("failed to cleanup %s created by last time", homePath)
+			}
+		}
+		if err = os.MkdirAll(homePath, 0711); err != nil {
+			return storage.Snapshot{}, "", nil, err
+		}
+		snapshotDir = homePath
+	} else {
+		if !errdefs.IsNotFound(err) {
+			log.G(ctx).WithError(err).Warn("activePath specified invalid")
+		}
+	}
+	td, err := os.MkdirTemp(snapshotDir, "new-")
+	if err != nil {
+		return storage.Snapshot{}, "", nil, fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	var path string
+	defer func() {
+		if err != nil {
+			if td != "" {
+				if err1 := os.RemoveAll(td); err1 != nil {
+					log.G(ctx).WithError(err1).Warn("failed to cleanup temp snapshot directory")
+				}
+			}
+			if path != "" {
+				if err1 := os.RemoveAll(path); err1 != nil {
+					log.G(ctx).WithError(err1).WithField("path", path).Error("failed to reclaim snapshot directory, directory may need removal")
+					err = fmt.Errorf("failed to remove path: %v: %w", err1, err)
+				}
+			}
+		}
+	}()
+
+	var mounts []mount.Mount
+	// 1. create snapshot metadata
+	s, err := storage.CreateSnapshot(ctx, kind, key, parent, opts...)
+	if err != nil {
+		return storage.Snapshot{}, "", nil, fmt.Errorf("failed to create snapshot: %w", err)
+	}
+	path = o.fsPath(&base, s.ID, key)
+	// 2. get parents
+	parentDir := ""
+	if parent != "" {
+		pID, pInfo, _, err := storage.GetInfo(ctx, parent)
+		if err != nil {
+			return storage.Snapshot{}, "", nil, fmt.Errorf("failed to get parent snapshot: %w", err)
+		}
+		parentDir = o.fsPath(&pInfo, pID, parent)
+	}
+
+	if err = os.Rename(td, path); err != nil {
+		return storage.Snapshot{}, "", nil, fmt.Errorf("failed to rename: %w", err)
+	}
+	if isActive {
+		if data, ok := base.Labels["PodSandboxMetadata"]; ok {
+			if err := ioutil.WriteFile(filepath.Join(path, SandBoxMetaFile), []byte(data), 0644); err != nil {
+				log.G(ctx).Errorf("write sandbox meta failed. path: %s, err: %s", filepath.Join(path, SandBoxMetaFile), err.Error())
+			}
+		}
+		mounts, err = o.roDriver.ActiveMount(ctx, path, s.ID, parentDir, o.idToDirectory(s.ParentIDs))
+		if err != nil {
+			return storage.Snapshot{}, "", nil, fmt.Errorf("failed to prepare active lower dir mount: %w", err)
+		}
+	} else {
+		mounts, err = o.roDriver.PrepareMount(ctx, path, nil)
+		if err != nil {
+			return storage.Snapshot{}, "", nil, fmt.Errorf("failed to prepare readable lower dir mount: %w", err)
+		}
+	}
+	defer func() {
+		if err != nil {
+			o.roDriver.Cleanup(ctx, s.ID)
+		}
+	}()
+	parentPath := ""
+	if parent != "" {
+		if pID, pInfo, _, err := storage.GetInfo(ctx, parent); err == nil {
+			parentPath = o.fsPath(&pInfo, pID, parent)
+		}
+	}
+	return s, parentPath, mounts, nil
+}
+
+func (o *snapshotter) idToDirectory(ids []string) []string {
+	ret := []string{}
+	for _, v := range ids {
+		ret = append(ret, filepath.Join(o.root, "snapshots", v))
+	}
+	return ret
 }
 
 // Mounts returns the mounts for the transaction identified by key. Can be
@@ -306,7 +569,30 @@ func (o *snapshotter) Mounts(ctx context.Context, key string) ([]mount.Mount, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to get active mount: %w", err)
 	}
-	return o.mounts(&info, s, key), nil
+	snapshotDir := o.fsPath(&info, s.ID, key)
+	upperDir := o.upperPath(&info, s.ID, key)
+	lowerDir := o.lowerPath(&info, s.ID, key)
+	fsDir := filepath.Join(upperDir, "fs")
+	workDir := filepath.Join(upperDir, "work")
+	if _, err = os.Stat(upperDir); err == nil {
+		options := []string{"lowerdir=" + lowerDir, "upperdir=" + fsDir, "workdir=" + workDir}
+		// set index=off when mount overlayfs
+		if o.indexOff {
+			options = append(options, "index=off")
+		}
+
+		if o.userxattr {
+			options = append(options, "userxattr")
+		}
+		return []mount.Mount{
+			{
+				Source:  "overlay",
+				Type:    "overlay",
+				Options: options,
+			},
+		}, nil
+	}
+	return o.roDriver.GetMount(ctx, snapshotDir)
 }
 
 func (o *snapshotter) Commit(ctx context.Context, name, key string, opts ...snapshots.Opt) error {
@@ -329,9 +615,14 @@ func (o *snapshotter) Commit(ctx context.Context, name, key string, opts ...snap
 		return err
 	}
 
-	usage, err := fs.DiskUsage(ctx, o.upperPath(&info, id, key))
+	log.G(ctx).Infof("commit for layer %v  to %v ", key, name)
+	usage, err := fs.DiskUsage(ctx, o.fsPath(&info, id, key))
 	if err != nil {
 		return err
+	}
+	if err := o.roDriver.Commit(ctx, o.fsPath(&info, id, key)); err != nil {
+		log.G(ctx).Infof("commit for layer %v failed %v", key, err)
+		return fmt.Errorf("failed to commit active mount: %w", err)
 	}
 
 	if _, err = storage.CommitActive(ctx, key, name, snapshots.Usage(usage), opts...); err != nil {
@@ -367,15 +658,27 @@ func (o *snapshotter) Remove(ctx context.Context, key string) (err error) {
 		return fmt.Errorf("failed to get snapshot info: %w", err)
 	}
 
-	upperPath := o.upperPath(&info, id, key)
+	upperDir := o.upperPath(&info, id, key)
+	lowerDir := o.lowerPath(&info, id, key)
+	// If lowerDir found, try to umount it
+	if _, err := os.Stat(lowerDir); err == nil {
+		if err := mount.Unmount(lowerDir, 0); err != nil {
+			return fmt.Errorf("failed to umount lower dir: %w", err)
+		}
+	}
+	// Always try to ask roDriver to clean up its resource.
+	if err := o.roDriver.Cleanup(ctx, id); err != nil {
+		return fmt.Errorf("failed to cleanup roDriver mount: %w", err)
+	}
 	activeQuota, err := o.getActiveQuota(&info)
 	if err != nil && !errdefs.IsNotFound(err) {
 		log.G(ctx).WithError(err).Warn("activeQuota specified invalid")
 	}
 	if o.quotaDriver != nil && activeQuota > 0 {
-		err := o.quotaDriver.Remove(ctx, filepath.Dir(upperPath))
+		err := o.quotaDriver.Remove(ctx, upperDir)
 		if err != nil {
 			log.G(ctx).WithError(err).Warn("failed to remove active quota")
+			return fmt.Errorf("failed to remove active quota: %w", err)
 		}
 	}
 
@@ -480,6 +783,17 @@ func (o *snapshotter) getCleanupDirectories(ctx context.Context, t storage.Trans
 	}
 	defer fd.Close()
 
+	upperDir := filepath.Join(o.defaultUpperDir, "snapshots")
+	fdu, uerr := os.Open(upperDir)
+	if uerr != nil {
+		return nil, uerr
+	}
+	defer fdu.Close()
+	udirs, uerr := fdu.Readdirnames(0)
+	if uerr != nil {
+		return nil, uerr
+	}
+
 	dirs, err := fd.Readdirnames(0)
 	if err != nil {
 		return nil, err
@@ -493,6 +807,14 @@ func (o *snapshotter) getCleanupDirectories(ctx context.Context, t storage.Trans
 
 		cleanup = append(cleanup, filepath.Join(snapshotDir, d))
 	}
+	for _, d := range udirs {
+		if _, ok := ids[d]; ok {
+			continue
+		}
+
+		cleanup = append(cleanup, filepath.Join(upperDir, d))
+	}
+	log.G(ctx).Infof("cleaning up directories: %v", cleanup)
 
 	return cleanup, nil
 }
@@ -565,266 +887,43 @@ func (o *snapshotter) getActiveQuota(info *snapshots.Info) (int, error) {
 	return s, nil
 }
 
-func (o *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, key, parent string, opts []snapshots.Opt) (_ []mount.Mount, err error) {
-	ctx, t, err := o.ms.TransactionContext(ctx, true)
-	if err != nil {
-		return nil, err
-	}
-
-	var base snapshots.Info
-	for _, opt := range opts {
-		if err := opt(&base); err != nil {
-			if rerr := t.Rollback(); rerr != nil {
-				log.G(ctx).WithError(rerr).Warn("failed to rollback transaction")
-			}
-			return nil, err
+func (o *snapshotter) fsPath(info *snapshots.Info, id string, key string) string {
+	if info != nil {
+		if home, err := getActivePath(info, key); err == nil {
+			// return path combined by home
+			return filepath.Join(home, id)
+		}
+		if _, ok := info.Labels["rwlayer"]; ok {
+			return filepath.Join(o.defaultUpperDir, "snapshots", id)
 		}
 	}
-	var td, path, snapshotDir string
-	defer func() {
-		if err != nil {
-			if td != "" {
-				if err1 := os.RemoveAll(td); err1 != nil {
-					log.G(ctx).WithError(err1).Warn("failed to cleanup temp snapshot directory")
-				}
-			}
-			if path != "" {
-				if err1 := os.RemoveAll(path); err1 != nil {
-					log.G(ctx).WithError(err1).WithField("path", path).Error("failed to reclaim snapshot directory, directory may need removal")
-					err = fmt.Errorf("failed to remove path: %v: %w", err1, err)
-				}
-			}
-		}
-	}()
-
-	if homePath, err := getActivePath(&base, key); err == nil {
-		// TODO Chaofeng: This section will clear the rwlayer data on specified path to handle malfunctioning machine data leak.
-		//               Need a more elegant way to handle this
-		if _, err := os.Stat(homePath); err == nil {
-			if err = os.RemoveAll(homePath); err != nil {
-				logrus.WithError(err).Errorf("failed to cleanup %s created by last time", homePath)
-			}
-		}
-
-		if err = os.MkdirAll(homePath, 0711); err != nil {
-			if rerr := t.Rollback(); rerr != nil {
-				log.G(ctx).WithError(rerr).Warn("failed to rollback transaction")
-			}
-			return nil, err
-		}
-		snapshotDir = homePath
-	} else {
-		if !errdefs.IsNotFound(err) {
-			log.G(ctx).WithError(err).Warn("activePath specified invalid")
-		}
-		snapshotDir = filepath.Join(o.root, "snapshots")
-	}
-
-	activeQuota, err := o.getActiveQuota(&base)
-	if err != nil && !errdefs.IsNotFound(err) {
-		log.G(ctx).WithError(err).WithField("snapshotter", base.Name).Warn("activeQuota specified invalid")
-	}
-
-	td, err = o.prepareDirectory(ctx, &base, snapshotDir, kind)
-	if err != nil {
-		if rerr := t.Rollback(); rerr != nil {
-			log.G(ctx).WithError(rerr).Warn("failed to rollback transaction")
-		}
-		return nil, fmt.Errorf("failed to create prepare snapshot dir: %w", err)
-	}
-	rollback := true
-	defer func() {
-		if rollback {
-			if rerr := t.Rollback(); rerr != nil {
-				log.G(ctx).WithError(rerr).Warn("failed to rollback transaction")
-			}
-		}
-	}()
-
-	s, err := storage.CreateSnapshot(ctx, kind, key, parent, opts...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create snapshot: %w", err)
-	}
-
-	if len(s.ParentIDs) > 0 {
-		st, err := os.Stat(o.upperPath(nil, s.ParentIDs[0], key))
-		if err != nil {
-			return nil, fmt.Errorf("failed to stat parent: %w", err)
-		}
-
-		stat := st.Sys().(*syscall.Stat_t)
-
-		if err := os.Lchown(filepath.Join(td, "fs"), int(stat.Uid), int(stat.Gid)); err != nil {
-			if rerr := t.Rollback(); rerr != nil {
-				log.G(ctx).WithError(rerr).Warn("failed to rollback transaction")
-			}
-			return nil, fmt.Errorf("failed to chown: %w", err)
-		}
-	}
-
-	if o.quotaDriver != nil && activeQuota > 0 {
-		err = o.quotaDriver.Remove(ctx, td)
-		if err != nil {
-			log.G(ctx).WithError(err).WithField("snapshotter", base.Name).Warn("failed to remove active quota")
-		}
-	}
-	path = filepath.Join(snapshotDir, s.ID)
-	if err = os.Rename(td, path); err != nil {
-		return nil, fmt.Errorf("failed to rename: %w", err)
-	}
-	if o.quotaDriver != nil && activeQuota > 0 {
-		opts := map[string]string{
-			"base":   path,
-			"rwFlag": "rw",
-		}
-		err = o.quotaDriver.Setup(ctx, path, activeQuota, opts)
-		if err != nil {
-			log.G(ctx).WithError(err).WithField("snapshotter", base.Name).Warn("failed to setup active quota")
-		}
-	}
-
-	td = ""
-
-	rollback = false
-	if err = t.Commit(); err != nil {
-		return nil, fmt.Errorf("commit failed: %w", err)
-	}
-
-	return o.mounts(&base, s, key), nil
-}
-
-func (o *snapshotter) prepareDirectory(ctx context.Context, info *snapshots.Info, snapshotDir string, kind snapshots.Kind) (string, error) {
-	td, err := os.MkdirTemp(snapshotDir, "new-")
-	if err != nil {
-		return "", fmt.Errorf("failed to create temp dir: %w", err)
-	}
-
-	if err := os.Mkdir(filepath.Join(td, "fs"), 0755); err != nil {
-		return td, err
-	}
-
-	if kind == snapshots.KindActive {
-		if err := os.Mkdir(filepath.Join(td, "work"), 0711); err != nil {
-			return td, err
-		}
-	}
-
-	// setup active quota.
-	activeQuota, err := o.getActiveQuota(info)
-	if err != nil && !errdefs.IsNotFound(err) {
-		log.G(ctx).WithError(err).Warn("activeQuota specified invalid")
-	}
-	if o.quotaDriver != nil && activeQuota > 0 {
-		opts := map[string]string{
-			"base":   td,
-			"rwFlag": "rw",
-		}
-		err := o.quotaDriver.Setup(ctx, td, activeQuota, opts)
-		if err != nil {
-			log.G(ctx).WithError(err).Warn("failed to prepare quota size")
-		}
-
-		// set active quota will overwrite snapshotter directory.
-		if err := os.Mkdir(filepath.Join(td, "fs"), 0755); err != nil {
-			return td, err
-		}
-
-		if kind == snapshots.KindActive {
-			if err := os.Mkdir(filepath.Join(td, "work"), 0711); err != nil {
-				return td, err
-			}
-		}
-	}
-
-	return td, nil
-}
-
-func (o *snapshotter) mounts(info *snapshots.Info, s storage.Snapshot, key string) []mount.Mount {
-	if len(s.ParentIDs) == 0 {
-		// if we only have one layer/no parents then just return a bind mount as overlay
-		// will not work
-		roFlag := "rw"
-		if s.Kind == snapshots.KindView {
-			roFlag = "ro"
-		}
-
-		return []mount.Mount{
-			{
-				Source: o.upperPath(info, s.ID, ""),
-				Type:   "bind",
-				Options: []string{
-					roFlag,
-					"rbind",
-				},
-			},
-		}
-	}
-	var options []string
-
-	// set index=off when mount overlayfs
-	if o.indexOff {
-		options = append(options, "index=off")
-	}
-
-	if o.userxattr {
-		options = append(options, "userxattr")
-	}
-
-	if s.Kind == snapshots.KindActive {
-		options = append(options,
-			fmt.Sprintf("workdir=%s", o.workPath(info, s.ID, key)),
-			fmt.Sprintf("upperdir=%s", o.upperPath(info, s.ID, key)),
-		)
-		if _, ok := info.Labels[volatileOpt]; ok {
-			options = append(options, "volatile")
-		}
-	} else if len(s.ParentIDs) == 1 {
-		return []mount.Mount{
-			{
-				Source: o.upperPath(info, s.ParentIDs[0], ""),
-				Type:   "bind",
-				Options: []string{
-					"ro",
-					"rbind",
-				},
-			},
-		}
-	}
-
-	parentPaths := make([]string, len(s.ParentIDs))
-	for i := range s.ParentIDs {
-		parentPaths[i] = o.upperPath(nil, s.ParentIDs[i], "")
-	}
-
-	options = append(options, fmt.Sprintf("lowerdir=%s", strings.Join(parentPaths, ":")))
-	return []mount.Mount{
-		{
-			Type:    "overlay",
-			Source:  "overlay",
-			Options: options,
-		},
-	}
-
+	return filepath.Join(o.root, "snapshots", id)
 }
 
 func (o *snapshotter) upperPath(info *snapshots.Info, id string, key string) string {
 	if info != nil {
 		if home, err := getActivePath(info, key); err == nil {
 			// return path combined by home
-			return filepath.Join(home, id, "fs")
+			return filepath.Join(home, id, "upper")
+		}
+		if _, ok := info.Labels["rwlayer"]; ok {
+			return filepath.Join(o.defaultUpperDir, "snapshots", id, "upper")
 		}
 	}
-	return filepath.Join(o.root, "snapshots", id, "fs")
+	return filepath.Join(o.root, "snapshots", id, "upper")
 }
 
-func (o *snapshotter) workPath(info *snapshots.Info, id string, key string) string {
+func (o *snapshotter) lowerPath(info *snapshots.Info, id string, key string) string {
 	if info != nil {
 		if home, err := getActivePath(info, key); err == nil {
 			// return path combined by home
-			return filepath.Join(home, id, "work")
+			return filepath.Join(home, id, "lower")
+		}
+		if _, ok := info.Labels["rwlayer"]; ok {
+			return filepath.Join(o.defaultUpperDir, "snapshots", id, "lower")
 		}
 	}
-	return filepath.Join(o.root, "snapshots", id, "work")
+	return filepath.Join(o.root, "snapshots", id, "lower")
 }
 
 // Close closes the snapshotter

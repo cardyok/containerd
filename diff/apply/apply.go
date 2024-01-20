@@ -97,8 +97,8 @@ func (s *fsApplier) Apply(ctx context.Context, desc ocispec.Descriptor, mounts [
 	}
 
 	skipUntar := true
-	for _, anno := range desc.Annotations {
-		if checkStringSlice(s.keepUntar, anno) {
+	for k, _ := range desc.Annotations {
+		if checkStringSlice(s.keepUntar, k) {
 			skipUntar = false
 			break
 		}

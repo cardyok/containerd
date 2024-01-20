@@ -24,10 +24,10 @@ import weak "gogoproto/gogo.proto";
 option go_package = "github.com/containerd/containerd/api/services/hotfix/v1;hotfix";
 
 service Hotfix {
-	rpc ChangeLogLevel(ChangeLogLevelRequest) returns (google.protobuf.Empty);
+  rpc ChangeLogLevel(ChangeLogLevelRequest) returns (google.protobuf.Empty);
 }
 
 
 message ChangeLogLevelRequest {
-	string log_level = 1;
+  string log_level = 1;
 }

@@ -99,7 +99,7 @@ func (p *proxySnapshotter) Active(ctx context.Context, key, parent string, opts 
 			return nil, err
 		}
 	}
-	resp, err := p.client.Active(ctx, &snapshotsapi.PrepareSnapshotRequest{
+	resp, err := p.client.Active(ctx, &snapshotsapi.ActiveSnapshotRequest{
 		Snapshotter: p.snapshotterName,
 		Key:         key,
 		Parent:      parent,

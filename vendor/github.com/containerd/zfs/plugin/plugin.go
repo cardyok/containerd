@@ -1,5 +1,4 @@
-//go:build linux
-// +build linux
+//go:build linux || freebsd
 
 /*
    Copyright The containerd Authors.
@@ -17,61 +16,47 @@
    limitations under the License.
 */
 
-package overlay
+package plugin
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/containerd/containerd/platforms"
 	"github.com/containerd/containerd/plugin"
-	"github.com/containerd/containerd/snapshots/overlay"
+	"github.com/containerd/zfs"
 )
 
-// Config represents configuration for the overlay plugin.
+// Config represents configuration for the zfs plugin
 type Config struct {
 	// Root directory for the plugin
-	RootPath        string `toml:"root_path"`
-	UpperdirLabel   bool   `toml:"upperdir_label"`
-	AsyncRemove     bool   `toml:"asyncRemove"`
-	QuotaDriver     string `toml:"quota_driver"`
-	DefaultUpperDir string `toml:"default_upperdir"`
+	RootPath string `toml:"root_path"`
 }
 
 func init() {
 	plugin.Register(&plugin.Registration{
 		Type:   plugin.SnapshotPlugin,
-		ID:     "overlayfs",
+		ID:     "zfs",
 		Config: &Config{},
 		InitFn: func(ic *plugin.InitContext) (interface{}, error) {
 			ic.Meta.Platforms = append(ic.Meta.Platforms, platforms.DefaultSpec())
 
+			// get config
 			config, ok := ic.Config.(*Config)
 			if !ok {
-				return nil, errors.New("invalid overlay configuration")
+				return nil, errors.New("invalid zfs configuration")
 			}
-
+			// use default ic.Root as root path if config doesn't have a valid root path
 			root := ic.Root
-			if config.RootPath != "" {
+			if len(config.RootPath) != 0 {
 				root = config.RootPath
 			}
-
-			var oOpts []overlay.Opt
-			if config.UpperdirLabel {
-				oOpts = append(oOpts, overlay.WithUpperdirLabel)
-			}
-
 			ic.Meta.Exports["root"] = root
-
-			if config.AsyncRemove {
-				oOpts = append(oOpts, overlay.AsynchronousRemove)
+			snapshotter, err := zfs.NewSnapshotter(root)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", err.Error(), plugin.ErrSkipPlugin)
 			}
-			if config.QuotaDriver != "" {
-				oOpts = append(oOpts, overlay.WithQuotaDriver(config.QuotaDriver))
-			}
-			if config.DefaultUpperDir != "" {
-				oOpts = append(oOpts, overlay.WithDefaultUpperDir(config.DefaultUpperDir))
-			}
-			return overlay.NewSnapshotter(root, oOpts...)
+			return snapshotter, nil
 		},
 	})
 }

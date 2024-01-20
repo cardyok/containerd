@@ -369,6 +369,10 @@ func (u *unpacker) handlerWrapper(
 						return u.unpack(uctx, rCtx, f, desc, l)
 					})
 				}
+			// TODO(Chaofeng): currently, we do not have a graceful way to determine referrer object, so we handler referrers with default case here.
+			//  other mediatypes ( like manifest list and layer blobs ) will not be a problem since layers does not record their key and unpack function
+			//  will try to unmarshal content as config layer as a backup coverage.
+			//  In the future we need better detection here.
 			default:
 				lock.Lock()
 				l := layers[desc.Digest]
