@@ -60,6 +60,8 @@ func ToGRPC(err error) error {
 		return status.Errorf(codes.Canceled, err.Error())
 	case IsDeadlineExceeded(err):
 		return status.Errorf(codes.DeadlineExceeded, err.Error())
+	case IsInvalidAuthorization(err):
+		return status.Errorf(codes.PermissionDenied, err.Error())
 	}
 
 	return err

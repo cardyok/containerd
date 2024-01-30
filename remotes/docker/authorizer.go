@@ -351,7 +351,7 @@ func invalidAuthorization(c auth.Challenge, responses []*http.Response) error {
 		return nil
 	}
 
-	return fmt.Errorf("server message: %s: %w", errStr, ErrInvalidAuthorization)
+	return fmt.Errorf("server message: %s: %w", errStr, errdefs.ErrInvalidAuthorization)
 }
 
 func sameRequest(r1, r2 *http.Request) bool {

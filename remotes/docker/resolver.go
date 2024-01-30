@@ -44,10 +44,6 @@ import (
 )
 
 var (
-	// ErrInvalidAuthorization is used when credentials are passed to a server but
-	// those credentials are rejected.
-	ErrInvalidAuthorization = errors.New("authorization failed")
-
 	// MaxManifestSize represents the largest size accepted from a registry
 	// during resolution. Larger manifests may be accepted using a
 	// resolution method other than the registry.
@@ -306,7 +302,7 @@ func (r *dockerResolver) Resolve(ctx context.Context, ref string) (_ string, _ o
 			log.G(ctx).Debug("resolving")
 			resp, err := req.doWithRetries(ctx, nil)
 			if err != nil {
-				if errors.Is(err, ErrInvalidAuthorization) {
+				if errors.Is(err, errdefs.ErrInvalidAuthorization) {
 					err = fmt.Errorf("pull access denied, repository does not exist or may require authorization: %w", err)
 				}
 

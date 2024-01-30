@@ -39,18 +39,24 @@ import (
 // For the most part, we just try to provide local grpc errors. Most conditions
 // map very well to those defined by grpc.
 var (
-	ErrUnknown            = errors.New("unknown") // used internally to represent a missed mapping.
-	ErrInvalidArgument    = errors.New("invalid argument")
-	ErrNotFound           = errors.New("not found")
-	ErrAlreadyExists      = errors.New("already exists")
-	ErrFailedPrecondition = errors.New("failed precondition")
-	ErrUnavailable        = errors.New("unavailable")
-	ErrNotImplemented     = errors.New("not implemented") // represents not supported and unimplemented
+	ErrUnknown              = errors.New("unknown") // used internally to represent a missed mapping.
+	ErrInvalidArgument      = errors.New("invalid argument")
+	ErrNotFound             = errors.New("not found")
+	ErrAlreadyExists        = errors.New("already exists")
+	ErrFailedPrecondition   = errors.New("failed precondition")
+	ErrUnavailable          = errors.New("unavailable")
+	ErrNotImplemented       = errors.New("not implemented")      // represents not supported and unimplemented
+	ErrInvalidAuthorization = errors.New("authorization failed") // when credentials are passed to a server but those credentials are rejected.
 )
 
 // IsInvalidArgument returns true if the error is due to an invalid argument
 func IsInvalidArgument(err error) bool {
 	return errors.Is(err, ErrInvalidArgument)
+}
+
+// IsInvalidAuthorization returns true if the error is due to an invalid authorization
+func IsInvalidAuthorization(err error) bool {
+	return errors.Is(err, ErrInvalidAuthorization)
 }
 
 // IsNotFound returns true if the error is due to a missing object
