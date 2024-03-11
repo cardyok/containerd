@@ -19,4 +19,4 @@
 
 package main
 
-import _ "github.com/containerd/aufs/plugin"
+// import _ "github.com/containerd/aufs/plugin"
