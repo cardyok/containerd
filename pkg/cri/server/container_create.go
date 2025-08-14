@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"path/filepath"
 	goruntime "runtime"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/containerd/typeurl/v2"
@@ -31,6 +33,8 @@ import (
 	selinux "github.com/opencontainers/selinux/go-selinux"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
 
+	"github.com/containerd/log"
+
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/containers"
 	"github.com/containerd/containerd/oci"
@@ -39,7 +43,7 @@ import (
 	customopts "github.com/containerd/containerd/pkg/cri/opts"
 	containerstore "github.com/containerd/containerd/pkg/cri/store/container"
 	"github.com/containerd/containerd/pkg/cri/util"
-	"github.com/containerd/log"
+	"github.com/containerd/containerd/snapshots"
 )
 
 func init() {
@@ -187,6 +191,13 @@ func (c *criService) CreateContainer(ctx context.Context, r *runtime.CreateConta
 	sOpts, err := snapshotterOpts(c.config.ContainerdConfig.Snapshotter, config)
 	if err != nil {
 		return nil, err
+	}
+	if sandbox.Metadata.Config != nil {
+		if _, ok := sandbox.Metadata.Config.Annotations["pod.lepton.ai/persist-rootfs"]; ok {
+			sOpts = append(sOpts, snapshots.WithLabels(map[string]string{
+				"containerd.io/snapshot/persist-rootfs": strings.Join([]string{sandbox.Metadata.Config.Metadata.Uid, strconv.Itoa(int(sandbox.Metadata.Config.Metadata.Attempt)), config.Metadata.Name}, "_"),
+			}))
+		}
 	}
 
 	// Set snapshotter before any other options.
