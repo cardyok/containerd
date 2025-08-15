@@ -26,13 +26,14 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/containerd/continuity/fs"
+	"github.com/containerd/log"
+	"github.com/sirupsen/logrus"
+
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/snapshots"
 	"github.com/containerd/containerd/snapshots/overlay/overlayutils"
 	"github.com/containerd/containerd/snapshots/storage"
-	"github.com/containerd/continuity/fs"
-	"github.com/containerd/log"
-	"github.com/sirupsen/logrus"
 )
 
 // upperdirKey is a key of an optional label to each snapshot.
@@ -132,6 +133,9 @@ func NewSnapshotter(root string, opts ...Opt) (snapshots.Snapshotter, error) {
 	if err := os.Mkdir(filepath.Join(root, "snapshots"), 0700); err != nil && !os.IsExist(err) {
 		return nil, err
 	}
+	if err := os.Mkdir(filepath.Join(root, "devpod"), 0700); err != nil && !os.IsExist(err) {
+		return nil, err
+	}
 
 	if !hasOption(config.mountOptions, "userxattr", false) {
 		// figure out whether "userxattr" option is recognized by the kernel && needed
@@ -188,7 +192,7 @@ func (o *snapshotter) Stat(ctx context.Context, key string) (info snapshots.Info
 		if info.Labels == nil {
 			info.Labels = make(map[string]string)
 		}
-		info.Labels[upperdirKey] = o.upperPath(id)
+		info.Labels[upperdirKey] = o.upperPath(id, "")
 	}
 	return info, nil
 }
@@ -208,7 +212,7 @@ func (o *snapshotter) Update(ctx context.Context, info snapshots.Info, fieldpath
 			if newInfo.Labels == nil {
 				newInfo.Labels = make(map[string]string)
 			}
-			newInfo.Labels[upperdirKey] = o.upperPath(id)
+			newInfo.Labels[upperdirKey] = o.upperPath(id, "")
 		}
 		return nil
 	})
@@ -235,7 +239,12 @@ func (o *snapshotter) Usage(ctx context.Context, key string) (_ snapshots.Usage,
 	}
 
 	if info.Kind == snapshots.KindActive {
-		upperPath := o.upperPath(id)
+		var upperPath string
+		if overridePath, ok := info.Labels["containerd.io/snapshot/persist-rootfs"]; ok {
+			upperPath = o.upperPath(overridePath, "devpod")
+		} else {
+			upperPath = o.upperPath(id, "")
+		}
 		du, err := fs.DiskUsage(ctx, upperPath)
 		if err != nil {
 			// TODO(stevvooe): Consider not reporting an error in this case.
@@ -260,16 +269,21 @@ func (o *snapshotter) View(ctx context.Context, key, parent string, opts ...snap
 // This can be used to recover mounts after calling View or Prepare.
 func (o *snapshotter) Mounts(ctx context.Context, key string) (_ []mount.Mount, err error) {
 	var s storage.Snapshot
+	var info snapshots.Info
 	if err := o.ms.WithTransaction(ctx, false, func(ctx context.Context) error {
 		s, err = storage.GetSnapshot(ctx, key)
 		if err != nil {
 			return fmt.Errorf("failed to get active mount: %w", err)
 		}
+		_, info, _, err = storage.GetInfo(ctx, key)
+		if err != nil {
+			return fmt.Errorf("failed to get active snapshot info: %w", err)
+		}
 		return nil
 	}); err != nil {
 		return nil, err
 	}
-	return o.mounts(s), nil
+	return o.mounts(s, info), nil
 }
 
 func (o *snapshotter) Commit(ctx context.Context, name, key string, opts ...snapshots.Opt) error {
@@ -280,7 +294,7 @@ func (o *snapshotter) Commit(ctx context.Context, name, key string, opts ...snap
 			return err
 		}
 
-		usage, err := fs.DiskUsage(ctx, o.upperPath(id))
+		usage, err := fs.DiskUsage(ctx, o.upperPath(id, ""))
 		if err != nil {
 			return err
 		}
@@ -337,7 +351,7 @@ func (o *snapshotter) Walk(ctx context.Context, fn snapshots.WalkFunc, fs ...str
 				if info.Labels == nil {
 					info.Labels = make(map[string]string)
 				}
-				info.Labels[upperdirKey] = o.upperPath(id)
+				info.Labels[upperdirKey] = o.upperPath(id, "")
 				return fn(ctx, info)
 			}, fs...)
 		}
@@ -407,6 +421,7 @@ func (o *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 	var (
 		s        storage.Snapshot
 		td, path string
+		info     snapshots.Info
 	)
 
 	defer func() {
@@ -438,7 +453,7 @@ func (o *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 		}
 
 		if len(s.ParentIDs) > 0 {
-			st, err := os.Stat(o.upperPath(s.ParentIDs[0]))
+			st, err := os.Stat(o.upperPath(s.ParentIDs[0], ""))
 			if err != nil {
 				return fmt.Errorf("failed to stat parent: %w", err)
 			}
@@ -449,9 +464,23 @@ func (o *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 			}
 		}
 
-		path = filepath.Join(snapshotDir, s.ID)
-		if err = os.Rename(td, path); err != nil {
-			return fmt.Errorf("failed to rename: %w", err)
+		_, info, _, err = storage.GetInfo(ctx, key)
+		if err != nil {
+			return fmt.Errorf("failed to get active snapshot info: %w", err)
+		}
+		if id, ok := info.Labels["containerd.io/snapshot/persist-rootfs"]; ok {
+			path = filepath.Join(filepath.Join(o.root, "devpod"), id)
+		} else {
+			path = filepath.Join(snapshotDir, s.ID)
+		}
+		if _, err = os.Stat(path); os.IsNotExist(err) {
+			if err = os.Rename(td, path); err != nil {
+				return fmt.Errorf("failed to rename: %w", err)
+			}
+		} else if err != nil {
+			return fmt.Errorf("failed to stat new snapshot dir %s: %w", path, err)
+		} else {
+			log.G(ctx).WithField("key", key).Infof("Reusing existing snapshot %s", path)
 		}
 		td = ""
 
@@ -460,7 +489,7 @@ func (o *snapshotter) createSnapshot(ctx context.Context, kind snapshots.Kind, k
 		return nil, err
 	}
 
-	return o.mounts(s), nil
+	return o.mounts(s, info), nil
 }
 
 func (o *snapshotter) prepareDirectory(ctx context.Context, snapshotDir string, kind snapshots.Kind) (string, error) {
@@ -482,7 +511,7 @@ func (o *snapshotter) prepareDirectory(ctx context.Context, snapshotDir string, 
 	return td, nil
 }
 
-func (o *snapshotter) mounts(s storage.Snapshot) []mount.Mount {
+func (o *snapshotter) mounts(s storage.Snapshot, info snapshots.Info) []mount.Mount {
 	if len(s.ParentIDs) == 0 {
 		// if we only have one layer/no parents then just return a bind mount as overlay
 		// will not work
@@ -493,7 +522,7 @@ func (o *snapshotter) mounts(s storage.Snapshot) []mount.Mount {
 
 		return []mount.Mount{
 			{
-				Source: o.upperPath(s.ID),
+				Source: o.upperPath(s.ID, ""),
 				Type:   "bind",
 				Options: []string{
 					roFlag,
@@ -505,14 +534,23 @@ func (o *snapshotter) mounts(s storage.Snapshot) []mount.Mount {
 
 	options := o.options
 	if s.Kind == snapshots.KindActive {
-		options = append(options,
-			fmt.Sprintf("workdir=%s", o.workPath(s.ID)),
-			fmt.Sprintf("upperdir=%s", o.upperPath(s.ID)),
-		)
+		if id, ok := info.Labels["containerd.io/snapshot/persist-rootfs"]; ok {
+			fmt.Printf("overlay: persist rootfs label found, updating upperdir %s\n", id)
+			options = append(options, fmt.Sprintf("upperdir=%s", o.upperPath(id, "devpod")))
+			options = append(options,
+				fmt.Sprintf("workdir=%s", o.workPath(id, "devpod")),
+				fmt.Sprintf("upperdir=%s", o.upperPath(id, "devpod")),
+			)
+		} else {
+			options = append(options,
+				fmt.Sprintf("workdir=%s", o.workPath(s.ID, "")),
+				fmt.Sprintf("upperdir=%s", o.upperPath(s.ID, "")),
+			)
+		}
 	} else if len(s.ParentIDs) == 1 {
 		return []mount.Mount{
 			{
-				Source: o.upperPath(s.ParentIDs[0]),
+				Source: o.upperPath(s.ParentIDs[0], ""),
 				Type:   "bind",
 				Options: []string{
 					"ro",
@@ -524,7 +562,7 @@ func (o *snapshotter) mounts(s storage.Snapshot) []mount.Mount {
 
 	parentPaths := make([]string, len(s.ParentIDs))
 	for i := range s.ParentIDs {
-		parentPaths[i] = o.upperPath(s.ParentIDs[i])
+		parentPaths[i] = o.upperPath(s.ParentIDs[i], "")
 	}
 
 	options = append(options, fmt.Sprintf("lowerdir=%s", strings.Join(parentPaths, ":")))
@@ -538,11 +576,17 @@ func (o *snapshotter) mounts(s storage.Snapshot) []mount.Mount {
 
 }
 
-func (o *snapshotter) upperPath(id string) string {
+func (o *snapshotter) upperPath(id string, parentDir string) string {
+	if parentDir != "" {
+		return filepath.Join(o.root, parentDir, id, "fs")
+	}
 	return filepath.Join(o.root, "snapshots", id, "fs")
 }
 
-func (o *snapshotter) workPath(id string) string {
+func (o *snapshotter) workPath(id string, parentDir string) string {
+	if parentDir != "" {
+		return filepath.Join(o.root, parentDir, id, "work")
+	}
 	return filepath.Join(o.root, "snapshots", id, "work")
 }
 

@@ -19,18 +19,20 @@ package server
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
-	"github.com/containerd/containerd"
-	"github.com/containerd/containerd/oci"
-	"github.com/containerd/containerd/plugin"
-	"github.com/containerd/containerd/snapshots"
 	imagespec "github.com/opencontainers/image-spec/specs-go/v1"
 	runtimespec "github.com/opencontainers/runtime-spec/specs-go"
 	selinux "github.com/opencontainers/selinux/go-selinux"
 	"golang.org/x/sys/unix"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1"
+
+	"github.com/containerd/containerd"
+	"github.com/containerd/containerd/oci"
+	"github.com/containerd/containerd/plugin"
+	"github.com/containerd/containerd/snapshots"
 
 	"github.com/containerd/containerd/pkg/cri/annotations"
 	customopts "github.com/containerd/containerd/pkg/cri/opts"
@@ -337,6 +339,43 @@ func (c *criService) cleanupSandboxFiles(id string, config *runtime.PodSandboxCo
 		}
 		if err := c.os.Unmount(path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("failed to unmount %q: %w", path, err)
+		}
+	}
+	dirPrefix := strings.Join([]string{config.Metadata.Uid, strconv.Itoa(int(config.Metadata.Attempt))}, "_")
+	newBase := strings.Replace(c.config.RootDir,
+		"io.containerd.grpc.v1.cri",
+		"io.containerd.snapshotter.v1.overlayfs",
+		1)
+	base := filepath.Join(newBase, "devpod")
+	return cleanupDirs(base, dirPrefix)
+}
+
+func cleanupDirs(targetRoot, dirPrefix string) error {
+	if _, err := os.Stat(targetRoot); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	entries, err := os.ReadDir(targetRoot)
+	if err != nil {
+		return fmt.Errorf("read dir %s: %w", targetRoot, err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), dirPrefix) {
+			fullPath := filepath.Join(targetRoot, entry.Name())
+			//mounted, err := isMounted(fullPath)
+			//if err != nil {
+			//	return fmt.Errorf("check mount for %s: %w", fullPath, err)
+			//}
+			//if mounted {
+			//	fmt.Printf("sandbox stop skip removing %s since its still mounted\n", fullPath)
+			//	continue
+			//}
+			fmt.Printf("sandbox stop cleaning up %s\n", fullPath)
+			if err := os.RemoveAll(fullPath); err != nil {
+				return fmt.Errorf("remove %s: %w", fullPath, err)
+			}
 		}
 	}
 	return nil
